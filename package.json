@@ -1,0 +1,36 @@
+{
+  "name": "release-please-projected-releases-action",
+  "version": "0.0.0",
+  "description": "Say on a pull request which release-please tags merging it will cut.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run build && npm run test"
+  },
+  "dependencies": {
+    "release-please": "17.11.2"
+  },
+  "license": "GPL-3.0-or-later",
+  "author": "Jason McVetta",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jmcvetta/release-please-projected-releases-action.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jmcvetta/release-please-projected-releases-action/issues"
+  },
+  "homepage": "https://github.com/jmcvetta/release-please-projected-releases-action#readme",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.27.7",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.0"
+  }
+}

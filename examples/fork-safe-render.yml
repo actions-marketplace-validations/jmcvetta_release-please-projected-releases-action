@@ -1,0 +1,41 @@
+# The rendering half of the fork-safe arrangement. See
+# examples/fork-safe-comment.yml for the other half and the reasoning.
+#
+# Copy to .github/workflows/projected-releases.yml.
+name: Projected releases
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+# Read-only, which is all a pull request from a fork gets anyway. This job
+# renders and posts nothing.
+permissions:
+  contents: read
+  # Reading, not writing: the action lists the open release pull requests so
+  # the pending version in the table can link to the one holding it. Without
+  # this the call is forbidden and every run carries a warning annotation for
+  # it. Set `link-release-prs: false` below instead if you would rather not
+  # grant it.
+  pull-requests: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.pull_request.head.ref, 'release-please--') }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: jmcvetta/release-please-projected-releases-action@v0
+        with:
+          mode: render
+      # The rendered body, and nothing else. Which pull request it belongs to
+      # is not sent along with it: a `pull_request` run executes the workflow
+      # file as the pull request writes it, so anything this job uploads is
+      # the head's to choose, and the posting job resolves the number from the
+      # API instead. See examples/fork-safe-comment.yml.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: projected-releases
+          path: projected-releases.md

@@ -1,0 +1,7 @@
+{
+  "note": "The fallback commit-type list, used when a repository's release-please-config.json declares no `changelog-sections` and the caller sets no `visible-types`/`hidden-types`. A data file rather than a TypeScript constant so a caller in another language can read the same list -- pinning a PR-title gate to it, say -- though the action's `recognized-types` output is the better source, since it reports what a run actually resolved.",
+  "source": "The default `types` of conventional-changelog-conventionalcommits, which is what release-please writes notes with when a config declares no `changelog-sections`.",
+  "visible": ["feat", "feature", "fix", "perf", "revert"],
+  "hidden": ["docs", "style", "chore", "refactor", "test", "build", "ci"],
+  "releaseBranchPrefix": "release-please--"
+}
