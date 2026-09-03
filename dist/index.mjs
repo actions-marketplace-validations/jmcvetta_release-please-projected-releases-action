@@ -3294,12 +3294,12 @@ var require_ansi_styles = __commonJS({
   "node_modules/ansi-styles/index.js"(exports2, module2) {
     "use strict";
     var wrapAnsi16 = (fn2, offset) => (...args) => {
-      const code = fn2(...args);
-      return `\x1B[${code + offset}m`;
+      const code2 = fn2(...args);
+      return `\x1B[${code2 + offset}m`;
     };
     var wrapAnsi256 = (fn2, offset) => (...args) => {
-      const code = fn2(...args);
-      return `\x1B[${38 + offset};5;${code}m`;
+      const code2 = fn2(...args);
+      return `\x1B[${38 + offset};5;${code2}m`;
     };
     var wrapAnsi16m = (fn2, offset) => (...args) => {
       const rgb = fn2(...args);
@@ -7741,7 +7741,7 @@ var require_parser3 = __commonJS({
           throw new Error(str);
         },
         parse: function parse(input2) {
-          var self2 = this, stack = [0], vstack = [null], lstack = [], table = this.table, yytext = "", yylineno = 0, yyleng = 0, recovering = 0, TERROR = 2, EOF = 1;
+          var self2 = this, stack = [0], vstack = [null], lstack = [], table2 = this.table, yytext = "", yylineno = 0, yyleng = 0, recovering = 0, TERROR = 2, EOF = 1;
           this.lexer.setInput(input2);
           this.lexer.yy = this.yy;
           this.yy.lexer = this.lexer;
@@ -7773,13 +7773,13 @@ var require_parser3 = __commonJS({
               if (symbol === null || typeof symbol == "undefined") {
                 symbol = lex();
               }
-              action2 = table[state] && table[state][symbol];
+              action2 = table2[state] && table2[state][symbol];
             }
             if (typeof action2 === "undefined" || !action2.length || !action2[0]) {
               var errStr = "";
               if (!recovering) {
                 expected = [];
-                for (p in table[state]) if (this.terminals_[p] && p > 2) {
+                for (p in table2[state]) if (this.terminals_[p] && p > 2) {
                   expected.push("'" + this.terminals_[p] + "'");
                 }
                 if (this.lexer.showPosition) {
@@ -7830,7 +7830,7 @@ var require_parser3 = __commonJS({
                 stack.push(this.productions_[action2[1]][0]);
                 vstack.push(yyval.$);
                 lstack.push(yyval._$);
-                newState = table[stack[stack.length - 2]][stack[stack.length - 1]];
+                newState = table2[stack[stack.length - 2]][stack[stack.length - 1]];
                 stack.push(newState);
                 break;
               case 3:
@@ -10683,10 +10683,10 @@ var require_source_node = __commonJS({
             lastGeneratedColumn = 0;
           } else {
             var nextLine = remainingLines[remainingLinesIndex] || "";
-            var code = nextLine.substr(0, mapping.generatedColumn - lastGeneratedColumn);
+            var code2 = nextLine.substr(0, mapping.generatedColumn - lastGeneratedColumn);
             remainingLines[remainingLinesIndex] = nextLine.substr(mapping.generatedColumn - lastGeneratedColumn);
             lastGeneratedColumn = mapping.generatedColumn;
-            addMappingWithCode(lastMapping, code);
+            addMappingWithCode(lastMapping, code2);
             lastMapping = mapping;
             return;
           }
@@ -10719,16 +10719,16 @@ var require_source_node = __commonJS({
         }
       });
       return node;
-      function addMappingWithCode(mapping, code) {
+      function addMappingWithCode(mapping, code2) {
         if (mapping === null || mapping.source === void 0) {
-          node.add(code);
+          node.add(code2);
         } else {
           var source = aRelativePath ? util.join(aRelativePath, mapping.source) : mapping.source;
           node.add(new SourceNode(
             mapping.originalLine,
             mapping.originalColumn,
             source,
-            code,
+            code2,
             mapping.name
           ));
         }
@@ -14899,17 +14899,17 @@ var require_decode = __commonJS({
       BinTrieFlags2[BinTrieFlags2["BRANCH_LENGTH"] = 16256] = "BRANCH_LENGTH";
       BinTrieFlags2[BinTrieFlags2["JUMP_TABLE"] = 127] = "JUMP_TABLE";
     })(BinTrieFlags = exports2.BinTrieFlags || (exports2.BinTrieFlags = {}));
-    function isNumber(code) {
-      return code >= CharCodes.ZERO && code <= CharCodes.NINE;
+    function isNumber(code2) {
+      return code2 >= CharCodes.ZERO && code2 <= CharCodes.NINE;
     }
-    function isHexadecimalCharacter(code) {
-      return code >= CharCodes.UPPER_A && code <= CharCodes.UPPER_F || code >= CharCodes.LOWER_A && code <= CharCodes.LOWER_F;
+    function isHexadecimalCharacter(code2) {
+      return code2 >= CharCodes.UPPER_A && code2 <= CharCodes.UPPER_F || code2 >= CharCodes.LOWER_A && code2 <= CharCodes.LOWER_F;
     }
-    function isAsciiAlphaNumeric(code) {
-      return code >= CharCodes.UPPER_A && code <= CharCodes.UPPER_Z || code >= CharCodes.LOWER_A && code <= CharCodes.LOWER_Z || isNumber(code);
+    function isAsciiAlphaNumeric(code2) {
+      return code2 >= CharCodes.UPPER_A && code2 <= CharCodes.UPPER_Z || code2 >= CharCodes.LOWER_A && code2 <= CharCodes.LOWER_Z || isNumber(code2);
     }
-    function isEntityInAttributeInvalidEnd(code) {
-      return code === CharCodes.EQUALS || isAsciiAlphaNumeric(code);
+    function isEntityInAttributeInvalidEnd(code2) {
+      return code2 === CharCodes.EQUALS || isAsciiAlphaNumeric(code2);
     }
     var EntityDecoderState;
     (function(EntityDecoderState2) {
@@ -21108,8 +21108,8 @@ var require_index_node_cjs = __commonJS({
                 const pattern = this.expr.slice(patternIndex, this.index);
                 let flags = "";
                 while (++this.index < this.expr.length) {
-                  const code = this.code;
-                  if (code >= 97 && code <= 122 || code >= 65 && code <= 90 || code >= 48 && code <= 57) {
+                  const code2 = this.code;
+                  if (code2 >= 97 && code2 <= 122 || code2 >= 65 && code2 <= 90 || code2 >= 48 && code2 <= 57) {
                     flags += this.char;
                   } else {
                     break;
@@ -21152,12 +21152,12 @@ var require_index_node_cjs = __commonJS({
         const updateNodeTypes = [jsep2.IDENTIFIER, jsep2.MEMBER_EXP];
         plugin.assignmentOperators.forEach((op) => jsep2.addBinaryOp(op, plugin.assignmentPrecedence, true));
         jsep2.hooks.add("gobble-token", function gobbleUpdatePrefix(env) {
-          const code = this.code;
-          if (plugin.updateOperators.some((c) => c === code && c === this.expr.charCodeAt(this.index + 1))) {
+          const code2 = this.code;
+          if (plugin.updateOperators.some((c) => c === code2 && c === this.expr.charCodeAt(this.index + 1))) {
             this.index += 2;
             env.node = {
               type: "UpdateExpression",
-              operator: code === PLUS_CODE ? "++" : "--",
+              operator: code2 === PLUS_CODE ? "++" : "--",
               argument: this.gobbleTokenProperty(this.gobbleIdentifier()),
               prefix: true
             };
@@ -21168,15 +21168,15 @@ var require_index_node_cjs = __commonJS({
         });
         jsep2.hooks.add("after-token", function gobbleUpdatePostfix(env) {
           if (env.node) {
-            const code = this.code;
-            if (plugin.updateOperators.some((c) => c === code && c === this.expr.charCodeAt(this.index + 1))) {
+            const code2 = this.code;
+            if (plugin.updateOperators.some((c) => c === code2 && c === this.expr.charCodeAt(this.index + 1))) {
               if (!updateNodeTypes.includes(env.node.type)) {
                 this.throwError(`Unexpected ${env.node.operator}`);
               }
               this.index += 2;
               env.node = {
                 type: "UpdateExpression",
-                operator: code === PLUS_CODE ? "++" : "--",
+                operator: code2 === PLUS_CODE ? "++" : "--",
                 argument: env.node,
                 prefix: false
               };
@@ -21741,19 +21741,19 @@ var require_index_node_cjs = __commonJS({
       }
       return ret;
     };
-    JSONPath.prototype._eval = function(code, _v, _vname, path, parent, parentPropName) {
+    JSONPath.prototype._eval = function(code2, _v, _vname, path, parent, parentPropName) {
       this.currSandbox._$_parentProperty = parentPropName;
       this.currSandbox._$_parent = parent;
       this.currSandbox._$_property = _vname;
       this.currSandbox._$_root = this.json;
       this.currSandbox._$_v = _v;
-      const containsPath = code.includes("@path");
+      const containsPath = code2.includes("@path");
       if (containsPath) {
         this.currSandbox._$_path = JSONPath.toPathString(path.concat([_vname]));
       }
-      const scriptCacheKey = this.currEval + "Script:" + code;
+      const scriptCacheKey = this.currEval + "Script:" + code2;
       if (!JSONPath.cache[scriptCacheKey]) {
-        let script = code.replaceAll("@parentProperty", "_$_parentProperty").replaceAll("@parent", "_$_parent").replaceAll("@property", "_$_property").replaceAll("@root", "_$_root").replaceAll(/@([.\s)[])/gu, "_$_v$1");
+        let script = code2.replaceAll("@parentProperty", "_$_parentProperty").replaceAll("@parent", "_$_parent").replaceAll("@property", "_$_property").replaceAll("@root", "_$_root").replaceAll(/@([.\s)[])/gu, "_$_v$1");
         if (containsPath) {
           script = script.replaceAll("@path", "_$_path");
         }
@@ -21778,7 +21778,7 @@ var require_index_node_cjs = __commonJS({
         if (this.ignoreEvalErrors) {
           return false;
         }
-        throw new Error("jsonPath: " + e.message + ": " + code);
+        throw new Error("jsonPath: " + e.message + ": " + code2);
       }
     };
     JSONPath.cache = {};
@@ -22232,16 +22232,16 @@ var require_dom = __commonJS({
     var INVALID_MODIFICATION_ERR = ExceptionCode.INVALID_MODIFICATION_ERR = (ExceptionMessage[13] = "Invalid modification", 13);
     var NAMESPACE_ERR = ExceptionCode.NAMESPACE_ERR = (ExceptionMessage[14] = "Invalid namespace", 14);
     var INVALID_ACCESS_ERR = ExceptionCode.INVALID_ACCESS_ERR = (ExceptionMessage[15] = "Invalid access", 15);
-    function DOMException(code, message) {
+    function DOMException(code2, message) {
       if (message instanceof Error) {
         var error = message;
       } else {
         error = this;
-        Error.call(this, ExceptionMessage[code]);
-        this.message = ExceptionMessage[code];
+        Error.call(this, ExceptionMessage[code2]);
+        this.message = ExceptionMessage[code2];
         if (Error.captureStackTrace) Error.captureStackTrace(this, DOMException);
       }
-      error.code = code;
+      error.code = code2;
       if (message) this.message = this.message + ": " + message;
       return error;
     }
@@ -25958,13 +25958,13 @@ var require_sax = __commonJS({
       }
     };
     function parse(source, defaultNSMapCopy, entityMap, domBuilder, errorHandler) {
-      function fixedFromCharCode(code) {
-        if (code > 65535) {
-          code -= 65536;
-          var surrogate1 = 55296 + (code >> 10), surrogate2 = 56320 + (code & 1023);
+      function fixedFromCharCode(code2) {
+        if (code2 > 65535) {
+          code2 -= 65536;
+          var surrogate1 = 55296 + (code2 >> 10), surrogate2 = 56320 + (code2 & 1023);
           return String.fromCharCode(surrogate1, surrogate2);
         } else {
-          return String.fromCharCode(code);
+          return String.fromCharCode(code2);
         }
       }
       function entityReplacer(a2) {
@@ -30129,9 +30129,9 @@ var require_xpath = __commonJS({
         return null;
       };
       var XPathException = (function() {
-        function getMessage(code, exception) {
+        function getMessage(code2, exception) {
           var msg = exception ? ": " + exception.toString() : "";
-          switch (code) {
+          switch (code2) {
             case XPathException2.INVALID_EXPRESSION_ERR:
               return "Invalid expression" + msg;
             case XPathException2.TYPE_ERR:
@@ -30139,9 +30139,9 @@ var require_xpath = __commonJS({
           }
           return null;
         }
-        function XPathException2(code, error, message) {
-          var err = Error.call(this, getMessage(code, error) || message);
-          err.code = code;
+        function XPathException2(code2, error, message) {
+          var err = Error.call(this, getMessage(code2, error) || message);
+          err.code = code2;
           err.exception = error;
           return err;
         }
@@ -31490,9 +31490,9 @@ var require_binary = __commonJS({
       const max = data2.length;
       const map = BASE64_MAP;
       for (let idx = 0; idx < max; idx++) {
-        const code = map.indexOf(data2.charAt(idx));
-        if (code > 64) continue;
-        if (code < 0) return false;
+        const code2 = map.indexOf(data2.charAt(idx));
+        if (code2 > 64) continue;
+        if (code2 < 0) return false;
         bitlen += 6;
       }
       return bitlen % 8 === 0;
@@ -38143,8 +38143,8 @@ var require_stringifyString = __commonJS({
             case "u":
               {
                 str += json.slice(start, i);
-                const code = json.substr(i + 2, 4);
-                switch (code) {
+                const code2 = json.substr(i + 2, 4);
+                switch (code2) {
                   case "0000":
                     str += "\\0";
                     break;
@@ -38170,8 +38170,8 @@ var require_stringifyString = __commonJS({
                     str += "\\P";
                     break;
                   default:
-                    if (code.substr(0, 2) === "00")
-                      str += "\\x" + code.substr(2);
+                    if (code2.substr(0, 2) === "00")
+                      str += "\\x" + code2.substr(2);
                     else
                       str += json.substr(i, 6);
                 }
@@ -40670,22 +40670,22 @@ var require_errors2 = __commonJS({
   "node_modules/yaml/dist/errors.js"(exports2) {
     "use strict";
     var YAMLError = class extends Error {
-      constructor(name2, pos, code, message) {
+      constructor(name2, pos, code2, message) {
         super();
         this.name = name2;
-        this.code = code;
+        this.code = code2;
         this.message = message;
         this.pos = pos;
       }
     };
     var YAMLParseError = class extends YAMLError {
-      constructor(pos, code, message) {
-        super("YAMLParseError", pos, code, message);
+      constructor(pos, code2, message) {
+        super("YAMLParseError", pos, code2, message);
       }
     };
     var YAMLWarning = class extends YAMLError {
-      constructor(pos, code, message) {
-        super("YAMLWarning", pos, code, message);
+      constructor(pos, code2, message) {
+        super("YAMLWarning", pos, code2, message);
       }
     };
     var prettifyError = (src, lc) => (error) => {
@@ -41594,7 +41594,7 @@ var require_resolve_flow_scalar = __commonJS({
       const { offset, type, source, end } = scalar;
       let _type2;
       let value;
-      const _onError = (rel, code, msg) => onError(offset + rel, code, msg);
+      const _onError = (rel, code2, msg) => onError(offset + rel, code2, msg);
       switch (type) {
         case "scalar":
           _type2 = Scalar.Scalar.PLAIN;
@@ -41791,9 +41791,9 @@ var require_resolve_flow_scalar = __commonJS({
     function parseCharCode(source, offset, length, onError) {
       const cc = source.substr(offset, length);
       const ok = cc.length === length && /^[0-9a-fA-F]+$/.test(cc);
-      const code = ok ? parseInt(cc, 16) : NaN;
+      const code2 = ok ? parseInt(cc, 16) : NaN;
       try {
-        return String.fromCodePoint(code);
+        return String.fromCodePoint(code2);
       } catch {
         const raw = source.substr(offset - 2, length + 2);
         onError(offset - 2, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`);
@@ -42115,12 +42115,12 @@ var require_composer = __commonJS({
         this.prelude = [];
         this.errors = [];
         this.warnings = [];
-        this.onError = (source, code, message, warning2) => {
+        this.onError = (source, code2, message, warning2) => {
           const pos = getErrorPos(source);
           if (warning2)
-            this.warnings.push(new errors.YAMLWarning(pos, code, message));
+            this.warnings.push(new errors.YAMLWarning(pos, code2, message));
           else
-            this.errors.push(new errors.YAMLParseError(pos, code, message));
+            this.errors.push(new errors.YAMLParseError(pos, code2, message));
         };
         this.directives = new directives.Directives({ version: options.version || "1.2" });
         this.options = options;
@@ -42282,12 +42282,12 @@ var require_cst_scalar = __commonJS({
     var stringifyString = require_stringifyString();
     function resolveAsScalar(token, strict = true, onError) {
       if (token) {
-        const _onError = (pos, code, message) => {
+        const _onError = (pos, code2, message) => {
           const offset = typeof pos === "number" ? pos : Array.isArray(pos) ? pos[0] : pos.offset;
           if (onError)
-            onError(offset, code, message);
+            onError(offset, code2, message);
           else
-            throw new errors.YAMLParseError([offset, offset + 1], code, message);
+            throw new errors.YAMLParseError([offset, offset + 1], code2, message);
         };
         switch (token.type) {
           case "scalar":
@@ -46697,10 +46697,10 @@ var require_stringify5 = __commonJS({
       if (firstValueType !== "table") throw typeError(firstValueType);
       const fullKey = prefix + stringifyKey(key);
       let result = "";
-      values.forEach((table) => {
+      values.forEach((table2) => {
         if (result.length > 0) result += "\n";
         result += indent + "[[" + fullKey + "]]\n";
-        result += stringifyObject(fullKey + ".", indent, table);
+        result += stringifyObject(fullKey + ".", indent, table2);
       });
       return result;
     }
@@ -48122,11 +48122,11 @@ var require_linked_versions = __commonJS({
     var merge_1 = require_merge3();
     var branch_name_1 = require_branch_name();
     var LinkedVersions = class extends plugin_1.ManifestPlugin {
-      constructor(github, targetBranch, repositoryConfig, groupName, components2, options = {}) {
+      constructor(github, targetBranch, repositoryConfig, groupName, components, options = {}) {
         var _a;
         super(github, targetBranch, repositoryConfig, options.logger);
         this.groupName = groupName;
-        this.components = new Set(components2);
+        this.components = new Set(components);
         this.merge = (_a = options.merge) !== null && _a !== void 0 ? _a : true;
       }
       /**
@@ -50836,8 +50836,8 @@ ${releaseList}
         dateFormat: config["date-format"]
       };
     }
-    async function parseConfig(github, configFile, branch2, onlyPath, releaseAs) {
-      const config = await fetchManifestConfig(github, configFile, branch2);
+    async function parseConfig(github, configFile, branch, onlyPath, releaseAs) {
+      const config = await fetchManifestConfig(github, configFile, branch);
       const defaultConfig = extractReleaserConfig(config);
       const repositoryConfig = {};
       for (const path in config.packages) {
@@ -50872,9 +50872,9 @@ ${releaseList}
       };
       return { config: repositoryConfig, options: manifestOptions };
     }
-    async function fetchManifestConfig(github, configFile, branch2) {
+    async function fetchManifestConfig(github, configFile, branch) {
       try {
-        return await github.getFileJson(configFile, branch2);
+        return await github.getFileJson(configFile, branch);
       } catch (e) {
         if (e instanceof errors_1.FileNotFoundError) {
           throw new errors_1.ConfigurationError(`Missing required manifest config: ${configFile}`, "base", `${github.repository.owner}/${github.repository.repo}`);
@@ -50885,17 +50885,17 @@ ${e.message}`, "base", `${github.repository.owner}/${github.repository.repo}`);
         throw e;
       }
     }
-    async function parseReleasedVersions(github, manifestFile, branch2) {
-      const manifestJson = await fetchReleasedVersions(github, manifestFile, branch2);
+    async function parseReleasedVersions(github, manifestFile, branch) {
+      const manifestJson = await fetchReleasedVersions(github, manifestFile, branch);
       const releasedVersions = {};
       for (const path in manifestJson) {
         releasedVersions[path] = version_1.Version.parse(manifestJson[path]);
       }
       return releasedVersions;
     }
-    async function fetchReleasedVersions(github, manifestFile, branch2) {
+    async function fetchReleasedVersions(github, manifestFile, branch) {
       try {
-        return await github.getFileJson(manifestFile, branch2);
+        return await github.getFileJson(manifestFile, branch);
       } catch (e) {
         if (e instanceof errors_1.FileNotFoundError) {
           throw new errors_1.ConfigurationError(`Missing required manifest versions: ${manifestFile}`, "base", `${github.repository.owner}/${github.repository.repo}`);
@@ -51578,11 +51578,11 @@ var require_branch = __commonJS({
       return REF_PREFIX + branchName;
     }
     exports2.createRef = createRef;
-    async function getBranchHead(octokit, origin, branch3) {
+    async function getBranchHead(octokit, origin, branch2) {
       const branchData = (await octokit.repos.getBranch({
         owner: origin.owner,
         repo: origin.repo,
-        branch: branch3
+        branch: branch2
       })).data;
       logger_1.logger.info(`Successfully found branch HEAD sha "${branchData.commit.sha}".`);
       return branchData.commit.sha;
@@ -51618,7 +51618,7 @@ var require_branch = __commonJS({
       }
     }
     exports2.createBranch = createBranch;
-    async function branch2(octokit, origin, upstream, name2, baseBranch = DEFAULT_PRIMARY_BRANCH) {
+    async function branch(octokit, origin, upstream, name2, baseBranch = DEFAULT_PRIMARY_BRANCH) {
       try {
         const baseSha = await getBranchHead(octokit, upstream, baseBranch);
         const duplicate = await existsBranchWithName(octokit, origin, name2);
@@ -51629,7 +51629,7 @@ var require_branch = __commonJS({
         throw err;
       }
     }
-    exports2.branch = branch2;
+    exports2.branch = branch;
   }
 });
 
@@ -59752,8 +59752,8 @@ var require_git_file_utils = __commonJS({
        * @param {string} branch Branch to fetch the file from
        * @returns {GitHubFileContents} The file contents
        */
-      async getFileContents(path, branch2) {
-        const fileCache = this.getBranchFileCache(branch2);
+      async getFileContents(path, branch) {
+        const fileCache = this.getBranchFileCache(branch);
         return await fileCache.getFileContents(path);
       }
       /**
@@ -59766,8 +59766,8 @@ var require_git_file_utils = __commonJS({
        *   the path prefix.
        * @returns {string[]} Paths to the files (relative to path prefix)
        */
-      async findFilesByFilename(filename, branch2, pathPrefix) {
-        const fileCache = this.getBranchFileCache(branch2);
+      async findFilesByFilename(filename, branch, pathPrefix) {
+        const fileCache = this.getBranchFileCache(branch);
         return await fileCache.findFilesByFilename(filename, pathPrefix);
       }
       /**
@@ -59781,8 +59781,8 @@ var require_git_file_utils = __commonJS({
        *   the path prefix.
        * @returns {string[]} Paths to the files (relative to path prefix)
        */
-      async findFilesByExtension(extension, branch2, pathPrefix) {
-        const fileCache = this.getBranchFileCache(branch2);
+      async findFilesByExtension(extension, branch, pathPrefix) {
+        const fileCache = this.getBranchFileCache(branch);
         return await fileCache.findFilesByExtension(extension, pathPrefix);
       }
       /**
@@ -59795,8 +59795,8 @@ var require_git_file_utils = __commonJS({
        *   the path prefix.
        * @returns {string[]} Paths to the files (relative to path prefix)
        */
-      async findFilesByGlob(glob, branch2, pathPrefix) {
-        const fileCache = this.getBranchFileCache(branch2);
+      async findFilesByGlob(glob, branch, pathPrefix) {
+        const fileCache = this.getBranchFileCache(branch);
         return await fileCache.findFilesByGlob(glob, pathPrefix);
       }
       /**
@@ -59804,11 +59804,11 @@ var require_git_file_utils = __commonJS({
        * @param {string} branch The branch the cache is for
        * @returns {BranchFileCache} The branch file cache
        */
-      getBranchFileCache(branch2) {
-        let fileCache = this.cache.get(branch2);
+      getBranchFileCache(branch) {
+        let fileCache = this.cache.get(branch);
         if (!fileCache) {
-          fileCache = new BranchFileCache(this.octokit, this.repository, branch2);
-          this.cache.set(branch2, fileCache);
+          fileCache = new BranchFileCache(this.octokit, this.repository, branch);
+          this.cache.set(branch, fileCache);
         }
         return fileCache;
       }
@@ -59822,10 +59822,10 @@ var require_git_file_utils = __commonJS({
        * @param {Repository} repository The repository we are fetching data for
        * @param {string} branch The branch we are fetching data from
        */
-      constructor(octokit, repository, branch2) {
+      constructor(octokit, repository, branch) {
         this.octokit = octokit;
         this.repository = repository;
-        this.branch = branch2;
+        this.branch = branch;
         this.cache = /* @__PURE__ */ new Map();
         this.treeCache = /* @__PURE__ */ new Map();
       }
@@ -60496,10 +60496,10 @@ var require_github2 = __commonJS({
        * @throws {FileNotFoundError} if the file cannot be found
        * @throws {GitHubAPIError} on other API errors
        */
-      async getFileContentsOnBranch(path, branch2) {
-        this.logger.debug(`Fetching ${path} from branch ${branch2}`);
+      async getFileContentsOnBranch(path, branch) {
+        this.logger.debug(`Fetching ${path} from branch ${branch}`);
         try {
-          return await this.fileCache.getFileContents(path, branch2);
+          return await this.fileCache.getFileContents(path, branch);
         } catch (e) {
           if (e instanceof git_file_utils_1.FileNotFoundError) {
             throw new errors_1.FileNotFoundError(path);
@@ -60507,8 +60507,8 @@ var require_github2 = __commonJS({
           throw e;
         }
       }
-      async getFileJson(path, branch2) {
-        const content = await this.getFileContentsOnBranch(path, branch2);
+      async getFileJson(path, branch) {
+        const content = await this.getFileContentsOnBranch(path, branch);
         return JSON.parse(content.parsedContent);
       }
       /**
@@ -61640,16 +61640,16 @@ function isMalformed(title, types = DEFAULT_TYPES) {
 function escape(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function releaseBranch(branch2, prefix = DEFAULT_TYPES.releaseBranchPrefix) {
+function releaseBranch(branch, prefix = DEFAULT_TYPES.releaseBranchPrefix) {
   const pattern = new RegExp(
     `^${escape(prefix)}branches--(?<base>[^-]|.+?)(?:--components--(?<component>.+))?$`
   );
-  const groups = pattern.exec(branch2.trim())?.groups;
+  const groups = pattern.exec(branch.trim())?.groups;
   if (!groups) return void 0;
   return { base: groups["base"] ?? "", component: groups["component"] ?? "" };
 }
-function componentOfBranch(branch2, prefix = DEFAULT_TYPES.releaseBranchPrefix) {
-  return releaseBranch(branch2, prefix)?.component;
+function componentOfBranch(branch, prefix = DEFAULT_TYPES.releaseBranchPrefix) {
+  return releaseBranch(branch, prefix)?.component;
 }
 
 // src/split.ts
@@ -61717,16 +61717,16 @@ ${commit.body.trim()}` : commit.title;
   };
   const paths = Object.keys(overrides);
   if (paths.length > 0) {
-    view.getFileJson = async function(path, branch2) {
+    view.getFileJson = async function(path, branch) {
       if (Object.hasOwn(overrides, path)) return overrides[path];
-      return base.getFileJson(path, branch2);
+      return base.getFileJson(path, branch);
     };
   }
   if (readHeadFile) {
-    view.getFileContentsOnBranch = async function(path, branch2) {
+    view.getFileContentsOnBranch = async function(path, branch) {
       const content = readHeadFile(path);
       if (content === void 0) {
-        return base.getFileContentsOnBranch(path, branch2);
+        return base.getFileContentsOnBranch(path, branch);
       }
       return {
         sha: "",
@@ -61945,10 +61945,10 @@ var import_release_please3 = __toESM(require_src2(), 1);
 function indexReleasePrs(prs, prefix = DEFAULT_TYPES.releaseBranchPrefix, base) {
   const index = /* @__PURE__ */ new Map();
   for (const pr of prs) {
-    const branch2 = releaseBranch(pr.headRefName, prefix);
-    if (!branch2 || !pr.url.trim()) continue;
-    if (base !== void 0 && branch2.base !== base) continue;
-    index.set(branch2.component, pr.url.trim());
+    const branch = releaseBranch(pr.headRefName, prefix);
+    if (!branch || !pr.url.trim()) continue;
+    if (base !== void 0 && branch.base !== base) continue;
+    index.set(branch.component, pr.url.trim());
   }
   return index;
 }
@@ -61970,15 +61970,6 @@ import { resolve } from "node:path";
 function visibleTitle(options) {
   const types = options.types ?? DEFAULT_TYPES;
   return types.visible.has(titleType(options.title) ?? "");
-}
-function bumpLevel(from, to) {
-  const a = from.split(".").map(Number);
-  const b = to.split(".").map(Number);
-  if (a.length !== 3 || b.length !== 3) return "version";
-  if (b[0] !== a[0]) return "major";
-  if (b[1] !== a[1]) return "minor";
-  if (b[2] !== a[2]) return "patch";
-  return "no";
 }
 function footer(options) {
   const parts = [];
@@ -62014,62 +62005,130 @@ function render(projection, options) {
   return [...lines, "", footer(options)].join("\n") + "\n";
 }
 function renderProjection(projection, options) {
+  const { rows, unmatched } = buildRows(projection);
   const touchedPackages = [...projection.touched.keys()].flatMap((path) => {
     const pkg = projection.packages.find((p) => p.path === path);
     return pkg ? [pkg] : [];
   });
   const touched = new Set(touchedPackages.map((p) => p.releaseComponent));
+  const moved = rows.filter(
+    (r) => r.projected !== void 0 && r.projected.version !== r.pending?.version
+  );
+  const unmoved = rows.filter(
+    (r) => r.projected !== void 0 && r.projected.version === r.pending?.version && touched.has(r.pkg.releaseComponent)
+  );
+  const said = verdict(projection, options, moved, unmoved, touchedPackages);
+  const out = [
+    "## Projected releases",
+    "",
+    ...said ? [said, ""] : [],
+    ...table(rows, options)
+  ];
   const byComponent = groupBy(projection.packages, (p) => p.releaseComponent);
   const shared = new Set(
     [...byComponent].filter(([, list]) => list.length > 1).map(([c]) => c)
   );
-  const unclaimed = claimOrder(byComponent, new Set(projection.touched.keys()));
-  const pendingBy = groupBy(projection.pending, (r) => r.component);
-  const unmatched = [];
-  const rows = projection.projected.map((projected) => {
-    const pkg = unclaimed.get(projected.component)?.shift();
-    if (!pkg) unmatched.push(projected.component);
-    return {
-      pkg: pkg ?? unconfigured(projected, projection),
-      projected,
-      pending: pendingBy.get(projected.component)?.shift()
-    };
-  });
-  const moved = rows.filter((r) => r.pending?.version !== r.projected.version);
-  const unmoved = rows.filter(
-    (r) => r.pending?.version === r.projected.version && touched.has(r.projected.component)
-  );
-  const out = ["## Projected releases", ""];
-  if (moved.length === 0) {
-    out.push(
-      ...unmoved.length > 0 ? ["No component's version changes."] : none(projection, options, touchedPackages)
-    );
-  } else {
-    out.push(
-      "| Component | Tag | Current | Without this PR | Projected |",
-      "| --- | --- | --- | --- | --- |"
-    );
-    for (const row of moved) {
-      out.push(
-        `| \`${row.pkg.component}\` | \`${tagFor(row.pkg, row.projected.version)}\` | ${row.pkg.current ?? "\u2014"} | ${pendingCell(row, options)} | **${row.projected.version}** |`
-      );
-    }
-    out.push("", basis(moved, projection));
-  }
-  if (unmoved.length > 0) {
-    out.push("", ...unmoved.map((row) => unmovedNote(row, options)));
-  }
-  const warnings = warn(projection, options, moved, unmoved, {
+  const warnings = warn(projection, options, moved, {
     unmatched,
     shared: byComponent,
+    // Only where a release actually had to be attributed. Every package has
+    // a row of its own now, so a shared component name is ambiguous only
+    // when there is a release to hand to one of them.
     named: new Set(
-      [...moved, ...unmoved].map((r) => r.pkg.releaseComponent).filter((c) => shared.has(c))
+      rows.filter((r) => r.projected ?? r.pending).map((r) => r.pkg.releaseComponent).filter((c) => shared.has(c))
     )
   });
   if (warnings.length > 0) out.push("", ...warnings);
   if (moved.length > 0) out.push("", changelog(moved));
-  out.push("", components(projection));
+  out.push("", matchedFiles(projection));
   return out;
+}
+function buildRows(projection) {
+  const byComponent = groupBy(projection.packages, (p) => p.releaseComponent);
+  const projectedBy = groupBy(projection.projected, (r) => r.component);
+  const pendingBy = groupBy(projection.pending, (r) => r.component);
+  const claimed = /* @__PURE__ */ new Map();
+  const unmatched = [];
+  const invented = [];
+  const order = claimOrder(byComponent, new Set(projection.touched.keys()));
+  const components = /* @__PURE__ */ new Set([
+    ...byComponent.keys(),
+    ...projectedBy.keys(),
+    ...pendingBy.keys()
+  ]);
+  for (const component of components) {
+    const packages = order.get(component) ?? [];
+    const projected = [...projectedBy.get(component) ?? []];
+    const pending = [...pendingBy.get(component) ?? []];
+    for (const pkg of packages) {
+      claimed.set(pkg, {
+        projected: projected.shift(),
+        pending: pending.shift()
+      });
+    }
+    for (const release of projected) {
+      unmatched.push(component);
+      invented.push({
+        pkg: unconfigured(release, projection),
+        projected: release,
+        pending: pending.shift(),
+        files: []
+      });
+    }
+  }
+  const rows = projection.packages.map((pkg) => ({
+    pkg,
+    projected: claimed.get(pkg)?.projected,
+    pending: claimed.get(pkg)?.pending,
+    files: projection.touched.get(pkg.path) ?? []
+  }));
+  return { rows: [...rows, ...invented], unmatched };
+}
+function table(rows, options) {
+  const showPath = new Set(rows.map((r) => r.pkg.path)).size > 1;
+  const columns = [
+    "Component",
+    ...showPath ? ["Path"] : [],
+    "Files",
+    "Current",
+    "Without this PR",
+    "Projected",
+    "Tag"
+  ];
+  const out = [
+    `| ${columns.join(" | ")} |`,
+    `| ${columns.map(() => "---").join(" | ")} |`
+  ];
+  for (const row of rows) {
+    const version = row.projected?.version;
+    const cells = [
+      code(row.pkg.component),
+      ...showPath ? [code(row.pkg.path)] : [],
+      String(row.files.length || "\u2014"),
+      row.pkg.current ?? "\u2014",
+      pendingCell(row, options),
+      projectedCell(row),
+      version === void 0 ? "\u2014" : `\`${tagFor(row.pkg, version)}\``
+    ];
+    out.push(`| ${cells.join(" | ")} |`);
+  }
+  return out;
+}
+function projectedCell(row) {
+  const version = row.projected?.version;
+  if (version === void 0) return "\u2014";
+  return version === row.pending?.version ? version : `**${version}**`;
+}
+function code(value) {
+  return value ? `\`${value}\`` : "\u2014";
+}
+function verdict(projection, options, moved, unmoved, touchedPackages) {
+  if (moved.length > 0) return void 0;
+  const type = titleType(options.title) ?? "";
+  if (unmoved.length > 0) {
+    return visibleTitle(options) ? `No version change \u2014 \`${type}\` adds only a changelog line.` : `No version change \u2014 \`${type}\` is a hidden type.`;
+  }
+  return none(projection, options, touchedPackages);
 }
 function unconfigured(release, projection) {
   const separators = new Set(projection.packages.map((p) => p.separator));
@@ -62108,24 +62167,16 @@ function none(projection, options, touched) {
     const dirs = [
       ...new Set(projection.files.map((f) => f.split("/")[0] ?? f))
     ].sort();
-    let line2 = "None \u2014 no changed file is under a component path.";
+    let line = "None \u2014 no changed file is under a component path.";
     if (dirs.length > 0) {
-      line2 += ` Touched: ${dirs.map((d) => `\`${d}\``).join(", ")}.`;
+      line += ` Touched: ${dirs.map((d) => `\`${d}\``).join(", ")}.`;
     }
-    return [line2];
+    return line;
   }
   const types = options.types ?? DEFAULT_TYPES;
   const visible = [...types.visible].sort().map((t) => `\`${t}\``).join(", ");
   const type = titleType(options.title) ?? "";
-  const line = visibleTitle(options) ? `None \u2014 release-please projects no release for the components this pull request touches, and none has one pending.` : `None \u2014 \`${type}\` is a hidden type, and no component it touches has a release pending. Only ${visible} open a release.`;
-  return [
-    line,
-    "",
-    `Components touched: ${nameList(touched)}.`
-  ];
-}
-function nameList(packages) {
-  return [...new Set(packages.map((p) => p.component || p.path))].sort().map((name2) => `\`${name2}\``).join(", ");
+  return visibleTitle(options) ? "None \u2014 release-please projects no release for the components touched." : `None \u2014 \`${type}\` is a hidden type. Only ${visible} open a release.`;
 }
 function releasePrUrl(component, options) {
   const prs = options.releasePrs;
@@ -62139,39 +62190,19 @@ function pendingCell(row, options) {
   const url = releasePrUrl(row.pkg.component, options);
   return url ? `[${row.pending.version}](${url})` : row.pending.version;
 }
-function basis(moved, projection) {
-  const asked = projection.releaseAs;
-  if (asked && !projection.ignoredReleaseAs) {
-    if (moved.some((r) => r.projected.version === asked)) {
-      return `\`Release-As: ${asked}\` forces the version.`;
-    }
-  }
-  const levels = [
-    ...new Set(
-      moved.map((r) => bumpLevel(r.pkg.current ?? "0.0.0", r.projected.version))
-    )
-  ];
-  return `${levels.join(" / ")} bump.`;
-}
-function unmovedNote(row, options) {
-  const url = releasePrUrl(row.pkg.component, options);
-  const version = row.projected.version;
-  const what = visibleTitle(options) ? " this PR adds a changelog line to it, not a version." : " this PR does not move it.";
-  const where = url ? `[${version}](${url}), already pending;` : `${version}, which ${branch(options)} already releases without it;`;
-  return `- \`${row.pkg.component}\` stays at ${where}${what}`;
-}
-function branch(options) {
-  return options.base ? `\`${options.base}\`` : "the target branch";
-}
-function warn(projection, options, moved, unmoved, components2) {
+function warn(projection, options, moved, components) {
   const warnings = [...options.advisories ?? []];
-  for (const component of [...new Set(components2.unmatched)].sort()) {
+  const asked = projection.releaseAs;
+  if (asked && !projection.ignoredReleaseAs && moved.some((r) => r.projected.version === asked)) {
+    warnings.push(`- \`Release-As: ${asked}\` forces the version.`);
+  }
+  for (const component of [...new Set(components.unmatched)].sort()) {
     warnings.push(
       `- release-please releases ${component ? `\`${component}\`` : "a component this comment cannot name"}, which matches no configured package here. The row's **Current** and matched files are unknown, and its tag is this comment's reading rather than a configured one.`
     );
   }
-  for (const component of [...components2.named].sort()) {
-    const paths = (components2.shared.get(component) ?? []).map((p) => `\`${p.path}\``).join(", ");
+  for (const component of [...components.named].sort()) {
+    const paths = (components.shared.get(component) ?? []).map((p) => `\`${p.path}\``).join(", ");
     warnings.push(
       `- ${paths} release under one component name, so a row's **Current** and matched files may belong to either. Give each package its own \`component\`.`
     );
@@ -62181,16 +62212,10 @@ function warn(projection, options, moved, unmoved, components2) {
       `- \`Release-As: ${projection.ignoredReleaseAs}\` was **ignored** \u2014 release-please returned a different version. A note only counts when it parses as a git trailer, so no non-trailer text may follow it: a \`---\` rule or an attribution line below it voids it silently. Check the merge box too, which is prefilled from the description but editable.`
     );
   }
-  if (moved.length === 0 && unmoved.length > 0 && !visibleTitle(options)) {
-    const type = titleType(options.title) ?? "";
-    warnings.push(
-      `- \`${type}\` adds no changelog line and changes no version. ${branch(options)} releases the same versions without it.`
-    );
-  }
   return warnings;
 }
 function changelog(moved) {
-  const body = moved.filter((r) => r.projected.notes).map((r) => `#### \`${r.pkg.component}\`
+  const body = moved.filter((r) => r.projected.notes).map((r) => `#### ${code(r.pkg.component)}
 
 ${r.projected.notes}`).join("\n\n");
   return [
@@ -62201,30 +62226,20 @@ ${r.projected.notes}`).join("\n\n");
     "</details>"
   ].join("\n");
 }
-function components(projection) {
-  const lines = [
-    "<details><summary>Components</summary>",
-    "",
-    "| Component | Path | Current |",
-    "| --- | --- | --- |"
-  ];
-  for (const pkg of projection.packages) {
-    lines.push(
-      `| \`${pkg.component}\` | \`${pkg.path}\` | ${pkg.current ?? "\u2014"} |`
-    );
-  }
+function matchedFiles(projection) {
+  const lines = ["<details><summary>Matched files</summary>", ""];
   for (const [path, files] of projection.touched) {
     const pkg = projection.packages.find((p) => p.path === path);
     const shown = files.slice(0, 10);
-    lines.push("", `\`${pkg?.component ?? path}\` matched:`);
+    lines.push(`\`${pkg?.component ?? path}\` matched:`);
     for (const file of shown) lines.push(`- \`${file}\``);
     if (files.length > shown.length) {
       lines.push(`- \u2026and ${files.length - shown.length} more`);
     }
+    lines.push("");
   }
   const rooted = projection.packages.some((p) => p.path === ROOT_PACKAGE_PATH);
   lines.push(
-    "",
     rooted ? `Longest path wins; \`${ROOT_PACKAGE_PATH}\` takes every file besides.` : "Longest path wins; a repository-root file matches nothing.",
     "",
     "</details>"
@@ -62283,7 +62298,6 @@ async function buildComment(options) {
     ...options.releasePrs ? { releasePrs: options.releasePrs } : {},
     ...options.headSha ? { headSha: options.headSha } : {},
     ...options.runUrl ? { runUrl: options.runUrl } : {},
-    ...options.base ? { base: options.base } : {},
     ...options.advisories ? { advisories: options.advisories } : {},
     ...options.now ? { now: options.now } : {}
   });

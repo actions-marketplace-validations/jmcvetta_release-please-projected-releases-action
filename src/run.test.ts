@@ -78,15 +78,17 @@ async function comment(
 describe("buildComment", () => {
   it("renders the tag a feature would cut", async () => {
     const out = await comment("feat: a thing");
-    expect(out).toContain("| `acme-api` | `acme-api@v2.5.0` | 2.4.1 |");
-    expect(out).toContain("minor bump.");
+    // One package, so no Path column: it would be `api` and nothing else.
+    expect(out).toContain(
+      "| `acme-api` | 1 | 2.4.1 | — | **2.5.0** | `acme-api@v2.5.0` |",
+    );
     expect(out).toContain("Changelog preview");
   });
 
   it("says nothing releases for a hidden type, as an answer", async () => {
     const out = await comment("chore: tidy up");
     expect(out).toContain("`chore` is a hidden type");
-    expect(out).toContain("Components touched: `acme-api`.");
+    expect(out).toContain("| `acme-api` | 1 | 2.4.1 |");
   });
 
   it("says which directories a pull request outside every component hit", async () => {
