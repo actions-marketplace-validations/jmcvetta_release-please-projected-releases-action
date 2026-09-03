@@ -13,8 +13,10 @@ correct a bad merge, not because a change is documentation only, and not
 because pushing directly would dodge some problem with the merge -- that last
 one is the tempting case and it is still no.
 
-`master` is not branch-protected here, so nothing stops it. That makes this a
-rule rather than a mechanism, and the rule is absolute.
+`infra/github` declares a ruleset that blocks direct pushes, so once that stack
+is applied a mechanism backs this up. The rule is absolute either way: a
+mechanism that has to be applied by hand can be un-applied by hand, and it says
+nothing about the ten minutes before someone runs it.
 
 ## Writing a pull request description
 
@@ -139,11 +141,19 @@ did not agree on what:
 |---|---|
 | `cd3ef99` (#1) | the trailer, then `---------`, then `Co-authored-by:` |
 | `7594442` (#7) | `Co-authored-by:` with no rule before it |
+| `a8b5a8f` (#11) | the trailer, then `---------`, then `Co-authored-by:` |
 
 Neither `---------` nor the co-author line was in the stored body. What
 decides the difference is **not established** -- do not write down a cause
 here without measuring one. What is established is the consequence: a rule
 below the trailer voids the note, a bare `Co-authored-by:` does not.
+
+**#11 was the pull request written to fix #1's voided trailer, and it was
+voided in exactly the same way**, having been merged without editing the merge
+box. Two for three now. So this is the common case rather than the accident,
+and a `Release-As:` trailer that reaches `master` through an unedited merge box
+should be expected to do nothing. The release pull request it produced asks for
+1.0.0, which is the number the trailer existed to prevent.
 
 Measured on this repository's own #1 by running release-please's
 `parseConventionalCommits` over each shape:
@@ -168,10 +178,11 @@ trailer below it, before confirming the merge.
 ## The release job needs permission to open a pull request
 
 `release-please.yml` falls back to `github.token` when the App variables are
-unset, and that fallback only works if **Settings -> Actions -> General ->
-Allow GitHub Actions to create and approve pull requests** is on. Otherwise
-release-please does all its work, pushes the release branch, and then fails
-on the last call:
+unset, and that fallback only works while Actions are allowed to create pull
+requests: `can_approve_pull_request_reviews` in `infra/github/main.tf`, which
+is **Settings -> Actions -> General -> Allow GitHub Actions to create and
+approve pull requests** in the web UI. With it off, release-please does all its
+work, pushes the release branch, and then fails on the last call:
 
 ```
 release-please failed: GitHub Actions is not permitted to create or approve
@@ -184,6 +195,27 @@ sidesteps the setting entirely and is worth it for a second reason: GitHub
 suppresses workflow events for anything pushed with the default token, so a
 release pull request opened with it arrives with no checks -- on the one pull
 request whose merge cuts a permanent tag.
+
+## The repository's own settings live in `infra/github`
+
+Merge strategy, the `master` ruleset, whether Actions may open a pull request:
+OpenTofu, applied by hand, reviewed as a diff. So the squash settings above are
+not folklore about what someone once clicked -- they are declared in
+`infra/github/main.tf` next to the reason they matter, and a plan that is not
+`No changes.` says someone changed one in the web UI.
+
+Two things it is worth knowing before editing that stack, both written up in
+`infra/github/README.md`: the state file is **committed**, which constrains
+what may be added to it (this repository is public, so state is world-readable
+and nothing credential-bearing belongs in it); and `required_status_checks` is
+deliberately absent from the ruleset, because the release pull request is
+opened with the default token and so never receives the check that would be
+required.
+
+`npm run check:infra` validates the configuration without credentials, and CI
+runs it. It is not part of `npm run check`, which must not start requiring
+OpenTofu on a laptop.
+
 
 ## A variant entry point calls the original; it never copies it
 
