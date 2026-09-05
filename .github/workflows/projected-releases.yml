@@ -43,7 +43,7 @@ jobs:
       # Full history, so the changed-file diff runs from the merge base rather
       # than falling back to the API's capped file list, and so the commit
       # file lists release-please needs are read locally.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       # The bundle is committed, so there is nothing to install: `uses: ./`
