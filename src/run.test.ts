@@ -10,11 +10,12 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setLogger } from "release-please";
-import { fakeScm } from "./fake-scm.fixture.js";
+import { fakeScm, RELEASE_SHA } from "./fake-scm.fixture.js";
+import type { BranchCommit } from "./pr-view.js";
 import { buildComment, graphqlRoot } from "./run.js";
 import type { quietLogger as QuietLogger } from "./run.js";
 
@@ -54,7 +55,16 @@ function fixture(config: unknown = CONFIG): string {
 
 async function comment(
   title: string,
-  over: { config?: unknown; files?: string[]; advisories?: string[]; body?: string } = {},
+  over: {
+    config?: unknown;
+    /** baseManifest is the target branch's manifest where it has moved on
+     * from the checkout's. */
+    baseManifest?: Record<string, string>;
+    files?: string[];
+    advisories?: string[];
+    body?: string;
+    branch?: BranchCommit[];
+  } = {},
 ): Promise<string> {
   const config = over.config ?? CONFIG;
   const outcome = await buildComment({
@@ -69,9 +79,10 @@ async function comment(
     headBranch: "topic",
     files: over.files ?? ["api/src/x.ts"],
     repoRoot: fixture(config),
-    github: fakeScm({ config, manifest: MANIFEST }),
+    github: fakeScm({ config, manifest: over.baseManifest ?? MANIFEST }),
     now: new Date("2026-09-01T12:00:00Z"),
     ...(over.advisories ? { advisories: over.advisories } : {}),
+    ...(over.branch ? { branch: over.branch } : {}),
   });
   return outcome.body;
 }
@@ -83,6 +94,14 @@ describe("buildComment", () => {
     // and `api`, once each, on the one row there is.
     expect(out).toContain("| 1 | 2.4.1 | — | **2.5.0** | `acme-api@v2.5.0` |");
     expect(out).toContain("Changelog preview");
+  });
+
+  it("shows the target branch's current version, not the checkout's", async () => {
+    // The checkout's manifest still says 2.4.1; the target branch released
+    // 2.5.0 after the checkout's merge commit was computed. The bump applies
+    // to the version that is really there.
+    const out = await comment("fix: a thing", { baseManifest: { api: "2.5.0" } });
+    expect(out).toContain("| 1 | 2.5.0 | — | **2.5.1** | `acme-api@v2.5.1` |");
   });
 
   // The answer is the line; a table of em dashes under it is one the reader
@@ -104,6 +123,29 @@ describe("buildComment", () => {
     expect(out).toContain("None — malformed PR title.");
     expect(out).toContain("> WIP: still working");
     expect(out).not.toContain("acme-api@v");
+  });
+
+  it("does not withhold one where the title is not the commit at all", async () => {
+    // Under a merge or a rebase the branch's commits are what release-please
+    // parses. A title that is not a Conventional Commit then describes
+    // nothing that will ever be a commit message, so the gate it fails is a
+    // gate this repository does not have -- and withholding the answer over
+    // it withholds the answer to the question it does ask.
+    const out = await comment("WIP: still working", {
+      branch: [
+        { sha: "aaa", message: "feat: a widget", files: ["api/src/x.ts"] },
+      ],
+    });
+    expect(out).not.toContain("malformed PR title");
+    expect(out).toContain("acme-api@v2.5.0");
+  });
+
+  it("explains an empty answer by the commits, not by the title's type", async () => {
+    const out = await comment("feat: a thing", {
+      branch: [{ sha: "aaa", message: "chore: tidy", files: ["api/src/x.ts"] }],
+    });
+    expect(out).toContain("None — no commit on this branch produces a release.");
+    expect(out).not.toContain("`feat:` produces no release");
   });
 
   it("resolves the recognized types from the repository's own config", async () => {
@@ -170,6 +212,149 @@ describe("buildComment", () => {
     const out = await comment("feat: a thing");
     expect(out).toContain("Projected for `abcdef1`");
     expect(out).toContain("re-rendered 2026-09-01 12:00 UTC");
+  });
+});
+
+/**
+ * plainOutcome runs the non-manifest mode against a checkout the caller
+ * describes: `root` is what the action would be pointed at, which is the
+ * whole input to the mode check.
+ */
+async function plainOutcome(root: string, workflow?: string) {
+  return buildComment({
+    owner: "acme",
+    repo: "widgets",
+    token: "",
+    title: "feat: a thing",
+    body: "",
+    number: 7,
+    base: "master",
+    headSha: "abcdef1234567890",
+    headBranch: "topic",
+    files: ["src/x.ts"],
+    repoRoot: root,
+    plain: { releaseType: "node" },
+    ...(workflow ? { releaseWorkflow: workflow } : {}),
+    github: fakeScm({
+      config: {},
+      manifest: {},
+      releases: [{ tagName: "v1.0.0", sha: RELEASE_SHA }],
+      files: { "package.json": JSON.stringify({ name: "widgets", version: "1.0.0" }) },
+    }),
+    now: new Date("2026-09-01T12:00:00Z"),
+  });
+}
+
+/** releaseWorkflow writes a release-please-action caller into a checkout,
+ * with the `with:` block the caller describes. */
+function releaseWorkflow(root: string, block: string): void {
+  const dir = join(root, ".github", "workflows");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "release-please.yml"),
+    "jobs:\n  release:\n    steps:\n" +
+      `      - uses: googleapis/release-please-action@v5\n        with:${block || "\n          token: x"}\n`,
+  );
+}
+
+describe("buildComment's mode switch", () => {
+  // The failure this is about is silent: the projection renders, and it
+  // describes a release-please configured differently from the one the merge
+  // will get. Nothing else in the run says so.
+  it("warns when plain mode ignored the config files in the checkout", async () => {
+    const outcome = await plainOutcome(fixture());
+    expect(outcome.body).toContain("`release-type` is set");
+    expect(outcome.body).toContain("`release-please-config.json`");
+    expect(outcome.body).toContain("in the checkout were not read");
+    // Out through the outcome as well, because the action turns each of these
+    // into a runner annotation and only sees what comes back.
+    expect(outcome.advisories.some((a) => a.includes("release-type"))).toBe(true);
+  });
+
+  // The ordinary plain-mode repository. A checkout with no such files is what
+  // the mode is for, and so is no checkout at all -- neither can be told from
+  // the other here, and both are right.
+  it("says nothing when there are no files to ignore", async () => {
+    const outcome = await plainOutcome(mkdtempSync(join(tmpdir(), "projected-releases-")));
+    expect(outcome.advisories).toEqual([]);
+    expect(outcome.body).not.toContain("`release-type` is set");
+  });
+
+  // The release workflow answers what the checkout could only raise, so the
+  // note becomes a statement rather than a warning about one of two
+  // possibilities -- and the two notes never appear together.
+  it("takes the mode from the release workflow when it can read one", async () => {
+    const root = fixture();
+    releaseWorkflow(root, "");
+    const outcome = await plainOutcome(root);
+    expect(outcome.advisories).toHaveLength(1);
+    expect(outcome.advisories[0]).toContain("calls release-please-action");
+    expect(outcome.advisories[0]).toContain("without one");
+    expect(outcome.body).not.toContain("in the checkout were not read");
+  });
+
+  // And when the workflow agrees, the config files in the checkout are not a
+  // problem at all: release-please will ignore them for the same reason this
+  // projection did. The guess had no way to know that.
+  it("says nothing about files a release workflow it agrees with also ignores", async () => {
+    const root = fixture();
+    releaseWorkflow(root, "\n          release-type: node");
+    const outcome = await plainOutcome(root);
+    expect(outcome.advisories).toEqual([]);
+  });
+
+  it("reads no workflow when told off", async () => {
+    const root = fixture();
+    releaseWorkflow(root, "\n          release-type: node");
+    const outcome = await plainOutcome(root, "off");
+    // Back to the checkout-only guess, which is what `off` asks for.
+    expect(outcome.body).toContain("in the checkout were not read");
+  });
+
+  // The same switch read the other way round: no `release-type`, so the files
+  // were looked for, and a plain-mode repository has none. The bare ENOENT
+  // names the file and leaves the reader to discover that its absence is how
+  // a mode gets selected.
+  it("names the mode switch when manifest mode has no file to read", async () => {
+    const empty = mkdtempSync(join(tmpdir(), "projected-releases-"));
+    await expect(
+      buildComment({
+        owner: "acme",
+        repo: "widgets",
+        token: "",
+        title: "feat: a thing",
+        body: "",
+        number: 7,
+        base: "master",
+        headSha: "abcdef1234567890",
+        headBranch: "topic",
+        files: ["src/x.ts"],
+        repoRoot: empty,
+      }),
+    ).rejects.toThrow(/no `release-please-config\.json`.*`release-type`/s);
+  });
+
+  // Half a manifest configuration is not a mode question, and answering it
+  // with "set `release-type`" would tell a manifest repository to stop being
+  // one.
+  it("does not offer the other mode to a repository missing one file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "projected-releases-"));
+    writeFileSync(join(root, "release-please-config.json"), JSON.stringify(CONFIG));
+    await expect(
+      buildComment({
+        owner: "acme",
+        repo: "widgets",
+        token: "",
+        title: "feat: a thing",
+        body: "",
+        number: 7,
+        base: "master",
+        headSha: "abcdef1234567890",
+        headBranch: "topic",
+        files: ["src/x.ts"],
+        repoRoot: root,
+      }),
+    ).rejects.toThrow(/no `\.release-please-manifest\.json`.*is there/s);
   });
 });
 

@@ -12,11 +12,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { action } from "./action.js";
+import { action, branchHead } from "./action.js";
 import { DEFAULT_HEADER, markerFor } from "./comment.js";
 import { startFakeGitHub } from "./fake-github-server.fixture.js";
 import type { FakeGitHub, FakeRepo } from "./fake-github-server.fixture.js";
@@ -30,9 +36,12 @@ const manifest = parse(
   runs: { using: string; main: string };
 };
 
-// Only action.ts, because it is the only file that names an input. Scanning
-// runner.ts too would pull in the placeholder names from its own tests.
+// action.ts and plain.ts, which are the only files that name an input:
+// plain.ts reads the non-manifest options for both entry points, so an input
+// the action offers can be named there rather than here. Scanning runner.ts
+// too would pull in the placeholder names from its own tests.
 const source = readFileSync(new URL("./action.ts", import.meta.url), "utf8");
+const plainSource = readFileSync(new URL("./plain.ts", import.meta.url), "utf8");
 
 /** literalsPassedTo collects the string literals handed to named functions. */
 function literalsPassedTo(text: string, callees: string[]): Set<string> {
@@ -42,11 +51,11 @@ function literalsPassedTo(text: string, callees: string[]): Set<string> {
   );
 }
 
-const read = literalsPassedTo(source, [
-  "input",
-  "inputOr",
-  "boolInput",
-  "listInput",
+const read = new Set([
+  ...literalsPassedTo(source, ["input", "inputOr", "boolInput", "listInput"]),
+  // plain.ts funnels every option it reads through one local accessor, so
+  // that is the callee to scan there.
+  ...literalsPassedTo(plainSource, ["value"]),
 ]);
 const declared = new Set(Object.keys(manifest.inputs));
 
@@ -151,8 +160,12 @@ async function start(over: Partial<FakeRepo> = {}) {
 const tmp = () => mkdtempSync(join(tmpdir(), "projected-releases-"));
 
 /** environment is the ordinary invocation: everything through inputs, the
- * fake for both URLs, and the changed files from the API so nothing here
- * depends on the checkout this suite happens to run in. */
+ * fake for both URLs, the changed files from the API, no release workflow read
+ * and an empty `repo-root`, so nothing here depends on the checkout this suite
+ * happens to run in -- which is this repository, whose own release workflow
+ * `auto` would find and whose own release-please-config.json plain mode would
+ * report as unread. Both have their own test below, against a checkout written
+ * for them. */
 function environment(
   server: FakeGitHub,
   over: Record<string, string> = {},
@@ -170,6 +183,8 @@ function environment(
     // The endpoint form, as a runner supplies it. run.ts normalizes it.
     "INPUT_GRAPHQL-URL": `${server.url}/graphql`,
     "INPUT_CHANGED-FILES": "api",
+    "INPUT_RELEASE-WORKFLOW": "off",
+    "INPUT_REPO-ROOT": dir,
     "INPUT_OUTPUT-FILE": join(dir, "projected-releases.md"),
     GITHUB_OUTPUT: join(dir, "outputs"),
     GITHUB_STEP_SUMMARY: join(dir, "summary"),
@@ -190,6 +205,25 @@ function outputs(env: Record<string, string>): Record<string, string> {
 
 const annotations = () => stdout.join("");
 
+/**
+ * quiet is what the fake was asked for, once anything in flight has landed.
+ *
+ * A request the action dispatched reaches the fake a few milliseconds later --
+ * measured at 16ms and three event loop turns for the first one, which pays
+ * for the connection. Reading `server.requests` the instant `action()` rejects
+ * would therefore report an empty list whether or not anything was sent, which
+ * is exactly the vacuous half of an assertion meant to prove nothing was. This
+ * returns the moment anything arrives, and waits an order of magnitude past
+ * that measurement before reporting that nothing did.
+ */
+async function quiet(server: FakeGitHub): Promise<string[]> {
+  const until = Date.now() + 250;
+  while (server.requests.length === 0 && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return server.requests;
+}
+
 describe("action", () => {
   it("renders, writes the outputs, and posts the comment", async () => {
     const server = await start();
@@ -199,6 +233,10 @@ describe("action", () => {
     const body = readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8");
     expect(body).toContain("| **1.0.0** |");
     expect(body).toContain("Changelog preview");
+    // What the fixture's empty `repo-root` buys, and the only thing that says
+    // so: plain mode reports config files it finds and did not read, and the
+    // checkout this suite runs in has a pair of its own.
+    expect(body).not.toContain("release-please-config.json");
 
     const out = outputs(env);
     expect(out["body"]).toBe(body);
@@ -297,6 +335,77 @@ describe("action modes", () => {
   });
 });
 
+describe("action, on the reads that decide nothing for each other", () => {
+  // The merge settings, the open pull requests, the changed-file list and the
+  // existing comments are four round trips, and none of them is an input to
+  // another. Serially they cost about a second of a seven-second step.
+  const INDEPENDENT = [
+    "GET /repos/acme/widgets",
+    "GET /repos/acme/widgets/pulls",
+    "GET /repos/acme/widgets/pulls/7/files",
+    "GET /repos/acme/widgets/issues/7/comments",
+  ];
+
+  it("starts all four at once rather than one after another", async () => {
+    // The fake holds each of them until the last arrives, so this passes only
+    // while they really are in flight together. Arrival order would prove
+    // nothing: a serial caller asks in the same order a concurrent one does.
+    const server = await start({ concurrent: INDEPENDENT });
+    await action(environment(server));
+    expect(server.overlapped()).toBe(true);
+    expect(server.comments).toHaveLength(1);
+  });
+
+  it("reads the comments before the projection", async () => {
+    const server = await start();
+    await action(environment(server));
+    const listed = server.requests.indexOf(INDEPENDENT[3]!);
+    expect(listed).toBeGreaterThanOrEqual(0);
+    // The projection is everything release-please asks over GraphQL, and the
+    // read that finds the sticky comment happens before all of it.
+    expect(listed).toBeLessThan(server.requests.indexOf("POST /graphql"));
+  });
+
+  it("re-reads before a first comment, and not before an edit", async () => {
+    // The head start is read before the body is rendered, so an absence in it
+    // is seconds stale -- and an absence is the answer that decides whether
+    // to create. Two runs that both trusted one would leave two comments,
+    // with `findSticky` serving the first of them forever. Finding the
+    // comment costs no such thing, so the steady state is the one read.
+    const server = await start();
+    const lists = () =>
+      server.requests.filter((r) => r === INDEPENDENT[3]).length;
+
+    await action(environment(server));
+    expect(lists()).toBe(2);
+
+    await action(environment(server, { INPUT_TITLE: "feat: a second thing" }));
+    expect(lists()).toBe(3);
+    expect(server.comments).toHaveLength(1);
+    expect(server.comments[0]?.body).toContain("a second thing");
+  });
+
+  it("survives a head start that fails, and reports it where it fell", async () => {
+    // The comment list is read before the projection and awaited after it, so
+    // a rejection nobody is waiting on yet would be an unhandled one -- which
+    // would fail the run over a read that is allowed to fail, and fail it
+    // before the projection it has nothing to do with was even written.
+    const server = await start({ commentListStatus: 403 });
+    const env = environment(server);
+    await action(env);
+    expect(readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8")).toContain("1.0.0");
+    expect(annotations()).toContain("::warning::could not post");
+  });
+
+  it("does not read the comments at all in `render`", async () => {
+    // Nothing is posted, so the head start would be a request spent on
+    // nothing.
+    const server = await start();
+    await action(environment(server, { INPUT_MODE: "render" }));
+    expect(server.requests).not.toContain(INDEPENDENT[3]);
+  });
+});
+
 describe("action, when the comment cannot be posted", () => {
   // A pull request from a fork carries a read-only token. Failing the run
   // there would put a red check on every outside contribution over an
@@ -341,15 +450,14 @@ describe("action, when a read it can do without fails", () => {
     expect(server.requests).not.toContain("GET /repos/acme/widgets/pulls");
   });
 
-  it("warns about a merge method the projection does not model", async () => {
-    // Declared rather than read, so the settings endpoint is not consulted at
-    // all. The advisory reaches the comment and the run's annotations both,
-    // because a projection that describes a merge this repository will not
-    // perform is worse than no projection.
+  it("warns when it cannot read the commits a merge would write", async () => {
+    // With no checkout to read and nothing for the API to list, the
+    // projection falls back to the squash answer -- and says so, because a
+    // projection that describes a merge this repository will not perform is
+    // worse than no projection.
     const server = await start();
     const env = environment(server, { "INPUT_MERGE-METHOD": "merge" });
     await action(env);
-    expect(server.requests).not.toContain("GET /repos/acme/widgets");
     expect(annotations()).toContain(
       "::warning::This repository is configured as `merge-method: merge`",
     );
@@ -358,11 +466,221 @@ describe("action, when a read it can do without fails", () => {
     );
   });
 
-  it("refuses a merge method that is not one", async () => {
+  it("projects a rebase from the branch's commits, read through the API", async () => {
+    // The title is a `feat:` and would release 1.0.0 under a squash-merge.
+    // Under a rebase it is not an input at all: the branch's one `fix:` is,
+    // and the version that comes out is release-please's answer to that.
+    const server = await start({
+      prCommits: {
+        7: [{ sha: "a".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    const env = environment(server, {
+      "INPUT_MERGE-METHOD": "rebase",
+      // A title a squash-merging repository's gate would reject outright.
+      INPUT_TITLE: "not a conventional commit at all",
+    });
+    await action(env);
+
+    const body = readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8");
+    expect(body).toContain("models the branch's own commits");
+    expect(body).not.toContain("malformed PR title");
+    expect(outputs(env)["malformed-title"]).toBe("false");
+    expect(server.requests).toContain("GET /repos/acme/widgets/pulls/7/commits");
+    expect(server.requests).toContain(`GET /repos/acme/widgets/commits/${"a".repeat(40)}`);
+    expect(annotations()).toContain("read the branch's 1 commit from the API");
+  });
+
+  it("projects a merge commit from the branch's commits and the title", async () => {
+    // GitHub's default merge commit carries the pull request title in its
+    // body, so a merge-commit repository releases from the title as well as
+    // from the branch. The `feat:` title is what makes this a minor release
+    // rather than the patch the branch alone would cut.
+    const server = await start({
+      prCommits: {
+        7: [{ sha: "b".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    const env = environment(server, { "INPUT_MERGE-METHOD": "merge" });
+    await action(env);
+
+    const body = readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8");
+    expect(body).toContain(", plus a merge commit above them");
+    expect(body).not.toContain("does not describe this merge");
+    expect(body).toContain("a crash");
+    expect(body).toContain("a thing");
+  });
+
+  it("reads the branch's commits only for a merge it is modelling", async () => {
+    const server = await start({
+      prCommits: {
+        7: [{ sha: "c".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    await action(environment(server));
+    expect(server.requests).not.toContain("GET /repos/acme/widgets/pulls/7/commits");
+  });
+
+  it("models the method a repository that cannot squash does allow", async () => {
+    const server = await start({
+      merge: { allow_squash_merge: false, allow_merge_commit: true },
+      prCommits: {
+        7: [{ sha: "d".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    const env = environment(server, { "INPUT_MERGE-METHOD": "auto" });
+    await action(env);
+    expect(readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8")).toContain(
+      "does not allow squash-merge",
+    );
+  });
+
+  it("takes squash and rebase at their word, without reading the settings", async () => {
+    const server = await start();
+    await action(environment(server, { "INPUT_MERGE-METHOD": "rebase" }));
+    expect(server.requests).not.toContain("GET /repos/acme/widgets");
+  });
+
+  it("reads the merge commit's own format even for a declared merge", async () => {
+    // The settings decide whether the merge commit carries the title, which
+    // decides whether the title releases. `BLANK` here, so the `feat:` title
+    // is not an input and the branch's `fix:` is the whole answer.
+    const server = await start({
+      merge: { merge_commit_message: "BLANK" },
+      prCommits: {
+        7: [{ sha: "e".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    const env = environment(server, { "INPUT_MERGE-METHOD": "merge" });
+    await action(env);
+    expect(server.requests).toContain("GET /repos/acme/widgets");
+    const body = readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8");
+    expect(body).toContain("a crash");
+    expect(body).not.toContain("a thing");
+  });
+
+  it("compares its inputs with the release workflow, in the comment and the log", async () => {
+    // The drift this exists for: the release workflow bumps every release as
+    // a patch and the projection was not told, so it reports the minor a
+    // default repository would get. Through the comment and the run's
+    // annotations both, since a note only one of them carries is one half the
+    // readers will miss.
+    const root = tmp();
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(
+      join(root, ".github", "workflows", "release.yml"),
+      "jobs:\n  release:\n    steps:\n" +
+        "      - uses: googleapis/release-please-action@v5\n" +
+        "        with:\n          release-type: node\n" +
+        "          versioning-strategy: always-bump-patch\n",
+    );
+    const server = await start();
+    const env = environment(server, {
+      "INPUT_REPO-ROOT": root,
+      "INPUT_RELEASE-WORKFLOW": "auto",
+    });
+    await action(env);
+
+    const body = readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8");
+    expect(body).toContain("`versioning-strategy: always-bump-patch`");
+    expect(annotations()).toContain("::warning::`.github/workflows/release.yml`");
+  });
+
+  it("asks the API when the checkout reads the range as empty", async () => {
+    // `HEAD..HEAD` is no commits, which is not a reading of the merge: it is
+    // a base and a head that do not describe it. Taking the empty array for
+    // an answer skipped the fallback and then blamed the checkout, which had
+    // read fine.
+    const server = await start({
+      prCommits: {
+        7: [{ sha: "f".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    const env = environment(server, {
+      "INPUT_MERGE-METHOD": "rebase",
+      "INPUT_CHANGED-FILES": "auto",
+      "INPUT_DIFF-BASE": "HEAD",
+      INPUT_HEAD: "HEAD",
+    });
+    await action(env);
+    expect(server.requests).toContain("GET /repos/acme/widgets/pulls/7/commits");
+    expect(readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8")).not.toContain(
+      "does not describe this merge",
+    );
+  });
+
+  it("stops paging a branch it has already decided is too long", async () => {
+    // The cap is what keeps a long branch from costing one request per commit
+    // for its files. Reaching it mid-listing is the answer, so the pages after
+    // it are requests spent on a projection already given up on.
+    const many = Array.from({ length: 101 }, (_, i) => ({
+      sha: String(i).padStart(40, "0"),
+      message: "fix: a crash",
+      files: ["src/b.ts"],
+    }));
+    const server = await start({ prCommits: { 7: many } });
+    const env = environment(server, { "INPUT_MERGE-METHOD": "rebase" });
+    await action(env);
+
+    const listings = server.requests.filter(
+      (r) => r === "GET /repos/acme/widgets/pulls/7/commits",
+    );
+    expect(listings).toHaveLength(1);
+    expect(readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8")).toContain(
+      "does not describe this merge",
+    );
+  });
+
+  it("warns that a `Release-As:` in the description is not an input here", async () => {
+    // The silence this closes: under a rebase the description is not a commit
+    // message at all, so a note written there asks for a version nothing will
+    // ever parse -- and reading notes only from the branch's commits meant
+    // nothing anywhere said so.
+    const server = await start({
+      prCommits: {
+        7: [{ sha: "9".repeat(40), message: "fix: a crash", files: ["src/b.ts"] }],
+      },
+    });
+    const env = environment(server, {
+      "INPUT_MERGE-METHOD": "rebase",
+      INPUT_BODY: "Ship it.\n\nRelease-As: 9.9.9\n",
+    });
+    await action(env);
+
+    const body = readFileSync(env["INPUT_OUTPUT-FILE"]!, "utf8");
+    expect(body).toContain("`Release-As: 9.9.9` was **ignored**");
+    expect(body).toContain("Put the note in a commit on the branch");
+    expect(body).not.toContain("Check the merge box");
+  });
+
+  it("refuses a merge method that is not one, before spending a request", async () => {
+    // The reads that follow are started together, so an input checked inside
+    // one of them is checked with the other two already in flight: three
+    // round trips spent on a run that cannot succeed.
     const server = await start();
     await expect(
       action(environment(server, { "INPUT_MERGE-METHOD": "fast-forward" })),
     ).rejects.toThrow(/must be one of/);
+    expect(await quiet(server)).toEqual([]);
+  });
+});
+
+describe("branchHead", () => {
+  // Which ref the branch's commits are read from, which is not the ref the
+  // changed-file diff runs against. See the function's own comment, and
+  // git.test.ts for what reading HEAD on a pull_request event produces.
+  const sha = "c".repeat(40);
+
+  it("prefers the event's head sha where the checkout holds it", () => {
+    expect(branchHead({}, sha, () => true)).toBe(sha);
+  });
+
+  it("falls back to HEAD where it does not", () => {
+    expect(branchHead({}, sha, () => false)).toBe("HEAD");
+  });
+
+  it("obeys an explicit head, which a caller named for a reason", () => {
+    expect(branchHead({ INPUT_HEAD: "topic" }, sha, () => true)).toBe("topic");
   });
 });
 
@@ -408,11 +726,12 @@ describe("action's changed-file list", () => {
     ).rejects.toThrow();
   });
 
-  it("refuses a source it does not have", async () => {
+  it("refuses a source it does not have, before spending a request", async () => {
     const server = await start();
     await expect(
       action(environment(server, { "INPUT_CHANGED-FILES": "guess" })),
     ).rejects.toThrow(/must be one of auto, git, api/);
+    expect(await quiet(server)).toEqual([]);
   });
 });
 
@@ -422,6 +741,18 @@ describe("action's release configuration", () => {
     await expect(
       action(environment(server, { "INPUT_RELEASE-TYPE": "nodejs" })),
     ).rejects.toThrow(/must be one of .*\bnode\b.*got `nodejs`/s);
+  });
+
+  // The same builder the command line uses, so this is really about the half
+  // that differs: that the action names an input the way an input is named.
+  it("names the offending input when a plain-mode value is not valid", async () => {
+    const server = await start();
+    await expect(
+      action(environment(server, { "INPUT_VERSIONING-STRATEGY": "always-bump-path" })),
+    ).rejects.toThrow(/input `versioning-strategy` must be one of .*got `always-bump-path`/s);
+    await expect(
+      action(environment(server, { "INPUT_RELEASE-AS": "v2.4.0" })),
+    ).rejects.toThrow(/input `release-as` must be a version/);
   });
 
   it("carries the plain-mode package options through to the tag", async () => {

@@ -131,14 +131,49 @@ Measured against real release-please, not read off the source:
 `package.json` does **not** seed it: with no prior tag the version comes from
 the strategy's `initialReleaseVersion()`. `initial-version` is a config-file
 key and a CLI flag; release-please-action exposes no input for it, so in plain
-mode it is unreachable.
+mode it is unreachable. That is a statement about plain mode rather than about
+this repository, which has a config file since 2026-09-10 -- see below.
 
-## This repository releases in plain mode
+## This repository releases in manifest mode, and one setting is the reason
 
-`release-type: node`, no `release-please-config.json` and no
-`.release-please-manifest.json`. That is deliberate: it is one package, and it
-keeps the dogfood workflow exercising the action's plain-mode path, which is
-where two bugs were caught that the fixtures could not see.
+`release-please-config.json` + `.release-please-manifest.json`, one package at
+`.` with `release-type: node`. It released in **plain mode** until 2026-09-10,
+which was deliberate for as long as it held: one package, and a dogfood
+workflow exercising the action's own plain-mode path.
+
+What moved it is `bump-minor-pre-major: true`. Below 1.0.0 that bumps a minor
+for a breaking change, so 1.0.0 takes a `Release-As:` trailer rather than the
+next `feat!:` -- and consumers pin `@v0`. **Plain mode cannot say it.**
+release-please-action passes `release-type`, `path`,
+`include-component-in-tag`, `changelog-host`, `versioning-strategy` and
+`release-as` into `Manifest.fromConfig` and nothing else (its `action.yml` and
+`src/index.ts`), and no registered versioning strategy means "a breaking
+change bumps the minor below 1.0.0". So the setting is unreachable there,
+exactly as `initial-version` is.
+
+**`include-component-in-tag: false` had to be written by hand, and it is the
+half of the move that could have gone wrong silently.** A manifest package
+defaults it to *true* where plain mode defaults it to false, so a straight
+move starts tagging `projected-releases-action-v0.8.0` -- which matches none of
+v0.1.0 .. v0.7.1, and a package with no matching tag has no release boundary.
+That is the `needsBootstrap` failure this action warns other repositories
+about.
+
+**What plain mode loses is production coverage, and a `mode: render` step was
+considered as a replacement and rejected.** It would catch a crash and nothing
+else, and neither bug the dogfood caught was that: both were bundling
+failures, and `bundle.test.ts` -- the committed bundle, in plain mode, against
+a fake GitHub over real HTTP -- is where they live now, with `action.test.ts`,
+`main.test.ts` and `history.test.ts`'s plain-mode walk counts either side of
+it. A step projecting a configuration this repository does not release with
+would be two copies of one configuration, which is what the dogfood step
+exists not to be.
+
+`src/release-config.test.ts` is the guard: the setting, the one package, the
+tag shape, the manifest seed against `package.json`'s version, and -- the
+quiet one -- that neither `release-please.yml` nor the dogfood step passes
+`release-type`, whose mere presence switches either of them back to a
+configuration nobody wrote down.
 
 ## Squash settings this repository relies on
 
@@ -219,17 +254,46 @@ forever, blocking every pull request, fixable only by someone applying the
 stack by hand. Nothing tests that pair -- check it by hand when renaming either
 side.
 
-**The cost lands on the release pull request, and it is real.** GitHub
-suppresses workflow events for everything the default token pushes, and
-`release-please.yml` falls back to that token while the App variables are
-unset, so the release pull request gets **no** check runs at all -- measured
-on #42, which has zero. `validate-title` therefore sits "expected" on the one
-pull request whose merge cuts a tag, and merging it takes the admin bypass
-the ruleset declares (`bypass_mode = "pull_request"`, so it is a click in the
-merge box, recorded). Configuring `RELEASE_BOT_APP_ID` +
-`RELEASE_BOT_PRIVATE_KEY` removes the click; `test` stays unrequired until
-then, since requiring it buys nothing on a pull request already being
-bypassed.
+**The cost lands on the release pull request, and it is a click.**
+`release-please.yml` falls back to the default token while the App variables
+are unset, so the release pull request is opened by `github-actions[bot]`.
+GitHub creates the workflow runs for a bot's pull request and holds them in
+`action_required` until someone with write access clicks **Approve workflows
+to run** -- the "N workflows awaiting approval" box on the pull request.
+
+Measured on #79: four check runs, `validate-title` among them, and every one
+of its workflow runs a second attempt whose triggering actor is a human
+rather than the bot that opened the pull request. A run still held is visible
+as its own attempt 1 with `conclusion: action_required` -- runs 34121791275
+and 34126114688, on the 0.6.1 release branch.
+
+https://github.blog/changelog/2026-06-11-bot-created-pull-requests-can-run-workflows-if-approved/
+
+**The hold follows whoever pushed the head, and that is the third path.** A
+human pushing to the release branch -- the merge box's *Update branch* button
+-- makes the runs a human's, so they start unheld. #42's head is `Merge
+branch 'master' into release-please--...`; its four check runs are attempt 1
+with `jmcvetta` as the actor, and it merged 54 seconds after `validate-title`
+went green, taking no bypass. **An earlier note here cited #42 as having zero
+check runs. It has four**, and opened on 2026-09-04 it can be evidence for
+nothing before the changelog above: every release pull request this
+repository has ever had postdates that date.
+
+So `validate-title` does report on the one pull request whose merge cuts a
+tag, one click late. The admin bypass the ruleset declares (`bypass_mode =
+"pull_request"`) is the hatch for the day one is needed rather than a step on
+every release. Configuring `RELEASE_BOT_APP_ID` + `RELEASE_BOT_PRIVATE_KEY`
+removes the click: an App is a distinct identity, so GitHub does not hold the
+runs on its pull requests -- measured on `jmcvetta/claude-daily-driver`,
+whose release pull requests run as `daily-driver-release-bot[bot]` on the
+first attempt, unapproved.
+
+**`test` stays unrequired, and the reason is `test.yml`'s `paths:` filter
+rather than anything about the release pull request.** A path-filtered
+workflow reports no check run at all rather than a skipped one, so a required
+`test` would leave every pull request matching nothing in its allow-list
+pending for ever -- a documentation change like this one included. Requiring
+it means dropping the filter in the same commit, and nothing enforces that.
 
 ## The release job needs permission to open a pull request
 
@@ -247,10 +311,10 @@ pull requests.
 
 The branch it pushed stays behind, so the failure looks like a partial
 success. Configuring the App (`RELEASE_BOT_APP_ID` + `RELEASE_BOT_PRIVATE_KEY`)
-sidesteps the setting entirely and is worth it for a second reason: GitHub
-suppresses workflow events for anything pushed with the default token, so a
-release pull request opened with it arrives with no checks -- on the one pull
-request whose merge cuts a permanent tag.
+sidesteps the setting entirely and is worth it for a second reason: a release
+pull request opened by `github-actions[bot]` arrives with its workflow runs
+held for approval, so the one pull request whose merge cuts a permanent tag
+reports no check until a human clicks.
 
 ## The repository's own settings live in `infra/github`
 
@@ -265,8 +329,8 @@ Two things it is worth knowing before editing that stack, both written up in
 what may be added to it (this repository is public, so state is world-readable
 and nothing credential-bearing belongs in it); and the ruleset requires
 `validate-title` and nothing else, because the release pull request is opened
-with the default token and so receives no checks at all -- see the section
-above for what that costs and what removes it.
+with the default token and so runs no check until a human approves it -- see
+the section above for what that costs and what removes it.
 
 **An apply is only half done until the state file is committed.** The apply
 happens on someone's laptop, and the state it rewrites is a file in this
@@ -346,6 +410,47 @@ sticky comment that matched on "my newest comment" rather than on its own
 hidden marker would edit the other one. That is what `src/comment.ts` is
 careful about, and why.
 
+## The checkout is not the target branch, and only the changed files may be served from it
+
+**A file the pull request does not change is read from the target branch, never
+from the checkout.** On a `pull_request` event `actions/checkout` gives you
+GitHub's merge of the head into the target branch *as it stood when the event
+fired*, and nothing re-fires the event when the target branch moves. A release
+cut in between leaves the checkout's `.release-please-manifest.json` a version
+behind, with no marker anywhere that says so -- and a re-run reproduces it
+exactly, because a re-run checks out the same merge commit.
+
+Serving that copy to release-please regardless is what `project` used to do,
+and the damage is not a wrong number in one column. **release-please matches a
+release to a component by the version the manifest names** --
+`expectedVersion.toString() === tagName.version.toString()`, manifest.js:225 --
+so a manifest one release behind makes it resolve the *previous* release as the
+boundary. The commit walk then starts there, replays everything the last
+release already shipped, and computes the version that was already cut.
+
+Measured on `jmcvetta/claude-daily-driver`#55: 0.3.0 was released at 14:41, the
+comment re-rendered at 14:45, and it projected 0.3.0 again -- current 0.2.0,
+four changelog entries, three of them already in the 0.3.0 release. The job log
+is the whole diagnosis in two lines, and it is worth knowing they can differ:
+pass 1 logs `Found release for path ., v0.2.0` (head's stale manifest) and
+pass 2 logs `Found release for path ., v0.3.0` (the target branch's). **Two
+passes disagreeing about the last release is this bug's signature**, since the
+second pass never took an override.
+
+The rule that fixes it is the one `readHeadFile` already followed and the JSON
+overrides did not: **serve the head's copy only for a path in
+`options.commit.files`.** A pull request repairing the manifest still previews
+its repair; a pull request that never touches it gets the branch it will
+actually merge into. `withReleasedVersions` follows the same reading, so the
+"Current" column is the version release-please will bump from rather than the
+one the checkout happens to hold.
+
+The general form, which is what to carry to the next file this reaches for:
+**the checkout answers questions about the branch (its diff, its commits'
+file lists); the API answers questions about the target branch.** A path
+that reads the target branch's *state* from the checkout is stale by
+construction, and silently.
+
 ## The unresolved-boundary warning is read out of a log line
 
 release-please resolves a component's last release by matching a tag or a
@@ -386,20 +491,171 @@ what is true of both and leaves the reading to the reader.
 manifest resolves on its own branch and not on the one it targets, which is
 the ordinary shape of the repair, so the warning says which side it found.
 
+## The plain-mode inputs are checked against the release workflow, never taken from it
+
+A plain-mode repository configures release-please on `release-please-action`,
+and projecting it means writing those values a second time here. `workflow.ts`
+finds the step that calls it and compares the two, which is the whole of what
+it does: **nothing is read in to replace what the caller typed.** Reading the
+workflow to *supply* the configuration would put every one of that parser's
+failure modes -- the wrong file, the wrong job, an unresolved `${{ }}`, two
+callers -- into the number on the comment, which is the one thing that has to
+be trustworthy. Checking fails the other way: every uncertainty is `return`,
+and the result is the silence that existed before it.
+
+**What makes "unset" comparable is upstream's defaults, measured from
+release-please-action's own `action.yml`** rather than assumed: `path` empty is
+the root, `include-component-in-tag` is **false** (the same value
+`PLAIN_INCLUDE_COMPONENT_IN_TAG` picks, which is why a single-package
+repository agrees with its workflow without either side typing anything), and
+`versioning-strategy` is `default`. Get one of those wrong and the comparison
+accuses every correctly configured repository of drifting. Its `path`,
+incidentally, is this action's `package-path`; a note has to name each side by
+the name that side writes, or it sends the reader to edit the wrong file.
+
+The mode question the checkout could only *raise* -- `release-type` set here
+with config files present, which is either half of a pair being wrong -- this
+answers outright, so `buildComment` runs `modeAdvisories` only when no
+governing caller was found. Both notes at once would be one guess restating
+one fact.
+
+**Three test files run in this repository's own checkout**, so `auto` finds
+this repository's own `release-please.yml`: `action.test.ts`, `main.test.ts`
+and `bundle.test.ts` therefore pass `release-workflow: off` in their shared
+fixtures and cover the comparison against a checkout written for it. That is
+not tidiness. `test.yml`'s `paths:` allow-list names two workflow files and not
+`.github/workflows`, so most changes to a workflow do not run the suite.
+
+**Those fixtures point `repo-root` at an empty directory for the same reason.**
+The checkout carries a `release-please-config.json` of its own since this
+repository moved to manifest mode, and a plain-mode run that finds one says so
+-- a note about this repository on every projection in a suite that is
+describing `acme/widgets`.
+
 ## The two passes read the history once, and the file lists come from git
 
 A projection runs release-please twice over the same target branch, and the
 second walk used to re-read every commit the first one had already read. On a
 repository where the walk is expensive that is the whole cost paid twice: 103
 seconds became a 183-second step on `jmcvetta/career` (issue #54).
-`commits.ts` memoizes the walk, and `pr-view.ts`'s synthetic commit is yielded
+`history.ts` memoizes the walk, and `pr-view.ts`'s synthetic commit is yielded
 in front of it.
+
+**The cache is keyed on the target branch, and keying it on the options was a
+bug that hid in this repository's own mode.** One pass asks the history more
+than one question: `Manifest.fromConfig` resolves the last release first at
+`{maxResults: 250}`, and `buildPullRequests` then asks `{maxResults: 500,
+backfillFiles: true, batchSize: 100}`. An option-keyed cache answers the first
+and sends the second to a fresh walk, in both passes: the release search is
+the one that gets cached, and every page the pull request build reads is
+fetched twice. The release search also pages at ten, release-please passing it
+no batch size -- 25 serial pages where it finds no release pull request at
+all, and one page where the newest commit is a release. `fromConfig` is plain
+mode only, and this repository released in plain mode until 2026-09-10, so it
+paid three walks per pull request from the day the cache was written, with the
+suite reporting one throughout (issue #65).
+
+**How a walk count stays green while being the wrong number.** The test that
+drove a real `Manifest` drove manifest mode, which never calls `fromConfig`;
+the tests that drove the cache directly went nowhere near release-please,
+and one of them pinned the second walk as the *intended* contract. Both were
+passing tests about the walk count. A per-mode difference in what
+release-please calls is only visible to a test that drives the caller in each
+mode -- which is what the plain-mode fixture in `history.test.ts` now is.
+
+So there is one read, and each consumer's cap is applied when it is replayed.
+Two things that has to get right: the read is started `backfillFiles: true`
+whatever asked for it first, because a commit fetched without it **cannot be
+upgraded afterwards** -- upstream decides on the REST call from
+`pageInfo.hasNextPage` on the pull request's file list, and the commit it
+yields does not carry that flag; and the replay stops in whole pages of the
+size *that consumer* asked for, because release-please checks its cap between
+pages rather than between commits. 250 at a batch of 10 is 250 commits and at
+100 it is 300, and `latestReleaseVersion` accepts a release only when its sha
+is one the walk handed over -- so a replay that stops anywhere else answers a
+question release-please never asked.
 
 **Do not delegate to the upstream iterator with `yield*`.** release-please
 stops a walk by breaking out of a `for await`, which calls `return()` on the
 generator it is reading, and `yield*` forwards that upstream -- closing the
 shared walk for good and leaving the second pass with only what the first
 happened to need. Pulling one commit at a time leaves it suspended instead.
+
+**One cache per set of options for the releases and the tags, and one read
+per branch for the commits.** A release walk asked for with different options
+is a different walk and cannot be answered from the same cache. The two commit
+questions are not that: `latestReleaseVersion` wants 250 commits with no file
+lists and `buildPullRequests` wants the deep backfilling walk, which is two
+amounts of one history and whether its file lists are read. Answering only the
+first -- the cheap one, asked first -- left the expensive walk, the one issue
+#54 is about, read afresh in both passes; answering each from a cache of its
+own still reads the same pages twice. One read with the file lists on, and the
+rest applied to what each consumer is handed, is one `pullRequestsSince` query
+per projection where three was measured, on the fake HTTP server and asserted
+there now.
+
+**A walk that threw is over, and later consumers are told so.** A generator
+that threw is completed, so pulling it again answers `done` -- which reads to
+the second pass as a short history rather than as an error. The error is kept
+on the cache and rethrown instead. What was already handed out still replays:
+the failure is at the point the walk actually stopped. Defensive rather than
+reached today, since pass 1 is uncaught and a walk that throws there ends the
+run before pass 2 exists -- but it is the *second* pass that `project.ts`
+catches, turning a failure into an empty `pending` and a line on stderr, so a
+silently short walk there is the expensive one.
+
+**The question is the options, not a list of the fields this file knows.**
+Keying on an enumeration of named fields is a seam whose failure is silence:
+an option a release-please upgrade adds is dropped from the key, two callers
+that differ only in it collide, and whichever ran first decides the answer for
+both. So the options object is carried whole and sorted, and the release and
+tag walks pass upstream everything except the cap they apply at replay. An
+unknown option then costs a cache miss instead.
+
+That holds for anything JSON can write, which is every option release-please
+has ever passed these -- `ScmCommitIteratorOptions`,
+`ScmReleaseIteratorOptions` and `ScmTagIteratorOptions` are numbers and
+booleans and nothing else. **A function-valued option would key as absent**
+and bring the collision back. Nothing is one today; check it when an upgrade
+adds an option that is not a scalar.
+
+**The releases and the tags are memoized by the same mechanism, and they were
+read more times than the commits.** Each pass asks for them twice --
+`Manifest.fromConfig` resolves the last release through `latestReleaseVersion`
+and `buildPullRequests` walks them again to resolve every component's (one
+walk, not one per component) -- so a plain-mode projection listed the releases
+four times with identical pages, 1.3s of a 7.1s step on run 34031929980 (issue
+#66). `tagIterator` is the fallback when no release resolves and is asked for
+as many times.
+
+The two release callers disagree about how much they want: `latestReleaseVersion`
+passes no `maxResults` and `buildPullRequests` passes `releaseSearchDepth`.
+**So the shared walk is started uncapped and each consumer's cap is applied to
+what it is handed** -- which reads no more pages than upstream would have read
+for the deepest caller that actually ran, since a capped consumer leaves the
+shared iterator suspended at its cap rather than reading past it. Starting the
+walk capped instead would leave the uncapped caller short.
+
+**The three caps move to replay, and they do not round the same way.** A cap
+belongs at replay only where the replay stops where upstream would have.
+`releaseIterator` and `tagIterator` break inside the page and yield exactly
+`maxResults`, so their cap is `maxResults`. `mergeCommitIterator` yields the
+whole page and only then re-checks, so it overshoots to the next page
+boundary: its cap is that number rounded up to a whole page of the size the
+consumer asked for (`commitCap`). Hand it `maxResults` instead and a
+repository tuning `commit-search-depth` to 450 sees 450 commits where
+release-please walks 500 -- and a release whose sha sits in the fifty it lost
+stops counting as on-branch, which is a different last released version with
+nothing reporting it.
+
+The two caps are not read the same way upstream and this does not normalise
+them: `releaseIterator` reads `maxResults` with `??` and honours a zero,
+`tagIterator` reads it with `||` and treats zero as unlimited. Neither is
+asked for zero today. A wrapper that tidied the difference away would answer a
+question release-please would not -- so the test that holds it compares the
+wrapped walk against **release-please's own client** over the fake server at
+several caps. A fake on both sides would pin this file against itself and say
+nothing about the upgrade that moves it.
 
 **The file lists are the other half, and they were the larger one.**
 release-please backfills `commit.files` with one serial REST call for every
@@ -427,14 +683,66 @@ walk sends the walk to the API for what it stopped short of. Both are withheld
 when the repository's own config declares them: the projection has to describe
 the release-please run the merge will get, not a differently configured one.
 
+The page size goes to `commitSource` as well as to the manifest, since the
+shared read is the one that fetches; the depth does not, and must not. A cap
+there cannot be any consumer's own depth, because release-please stops
+between pages: a consumer capped at 40 in pages of 25 reads 50, and a read
+stopped at 40 starves it of ten commits -- silently, a short history being
+exactly what a branch with no more commits looks like. Nothing bounds the
+read except that it is pulled one commit at a time: a page nobody reads is a
+page never fetched.
+
+**What always-on backfill costs is paid by the release search.** It can reach
+further than the pull request build, which stops at the release boundary,
+and upstream backfills a whole page before yielding its first commit -- so
+replaying 250 commits to it backfills the 300 the read fetched, where
+release-please would have walked those 250 in pages of ten with no file lists
+at all. Deep checkout: the index answers them. Shallow: they are REST calls,
+traded against the round trips per page the shared read saves.
+
 **The receiver is the part that fails silently.** release-please calls
 `this.getCommitFiles` from inside its own iterator, so an override on a wrapper
 only ever runs if the upstream iterator was *started* with the wrapper as its
 receiver. Get that wrong and nothing breaks -- the API answers, the projection
 is right, the index is simply never consulted and the action is slow again. Two
-tests in `commits.test.ts` drive real release-please over the fake HTTP server
+tests in `history.test.ts` drive real release-please over the fake HTTP server
 with the index and the API disagreeing about which directory a commit touched,
 so the component that comes out names which one was read.
+
+**Every one of these caches fails silently too, and the same tests are the
+guard.** A memoized walk that stops being consulted costs pages and changes
+nothing on screen, so counting the walks needs real release-please: how many
+times it asks is a property of the manifest build, not of anything this action
+calls. `history.test.ts` therefore counts them over the fake HTTP server, in
+both modes: one release walk, one commit walk and *no* tag walk per projection
+in manifest mode, where the releases resolve every component; and one release
+walk, one tag walk and *two* commit walks in plain mode with nothing released,
+plain mode being where the second release caller and the second commit
+question both live.
+
+**Getting those numbers right meant fixing the fake, which had been serving
+malformed releases since it was written.** Its release node carried `tagName`,
+and release-please reads `release.tag.name`, defaulting to the string
+`unknown`. So `TagName.parse` rejected every release, nothing resolved, and
+every HTTP-level projection test was quietly running the recovery path:
+`Expected N releases, only found 0`, `backfillReleasesFromTags`,
+`needsBootstrap`, the full commit walk. It produced correct projections the
+whole time, which is why nobody noticed. Only one assertion in the suite
+changed when it was fixed -- a walk count written the day before.
+
+**But it moved what the suite covers, which an assertion count does not
+show.** With the releases resolving, two `main.test.ts` bump tests stopped
+reaching the tag recovery, and the fake's `/tags` payload became load-bearing
+nowhere: emptying it failed nothing. That is the same silence the release
+shape sat in. `history.test.ts` therefore has a repository with tags and no
+releases, asserting the boundary resolves -- the version alone does not prove
+it, since that comes from the manifest either way.
+
+The fake records GraphQL operations by the name in their `query` keyword --
+`releases`, `pullRequestsSince`, `mergedPullRequests` -- because every one of
+them is a POST to the one `/graphql` path and the request log cannot tell them
+apart. Read off the query rather than mapped from a list, so an operation
+nobody has seen yet is reported rather than counted as one of these.
 
 **What issue #54 asked for and this does not do is cap the walk.** An
 unresolved boundary sets `needsBootstrap`, which disables the early exit, and
@@ -448,6 +756,169 @@ build its first changelog. A cap firing on that would truncate a changelog
 with no warning anywhere, which is the failure this repository dislikes most.
 Reading the walk once and serving its file lists locally removes the cost the
 cap was for.
+
+## A transient GraphQL failure is retried, and the seam is `graphqlRequest`
+
+GitHub answers a query it could not finish with an HTTP **200** carrying an
+`errors` array -- `Something went wrong while executing your query`. Octokit
+raises that as a `GraphqlResponseError`, which has no `status`, so
+release-please's own retry loop (`err.status !== 502` and it rethrows) drops it
+on the first attempt. `project.ts` catches the second pass and not the first,
+so one failed page was the whole run: a stack trace where a comment should be
+(issue #74). Observed on 2026-09-09 on `Green-Pagoda/pagoda`#413 and
+`jmcvetta/claude-daily-driver`#120 within the same hour -- two repositories of
+very different sizes, which is what says the history's length is not the
+variable. The requested page is: this action walks at 100 where release-please
+walks at 10, and the query asks per commit for ten pull requests each carrying
+a hundred file paths.
+
+`graphql-retry.ts` retries it, backing off and halving the page as upstream's
+own loop does for the 502 it does retry. The cursor is per page, so a smaller
+page changes where the walk stops for breath and nothing about what it yields.
+It also retries the one *refusal* a smaller page answers,
+`MAX_NODE_LIMIT_EXCEEDED`, and only while there is a page left to halve.
+
+**The receiver trap has a second form, and this is it.** The note above says an
+override only runs if the upstream iterator was *started* with the wrapper as
+its receiver. That is necessary and not sufficient. `graphqlRequest` is an
+**arrow function assigned in the constructor**, so the `this.graphql` inside it
+is the instance it was built on, captured lexically and immune to the receiver:
+shadowing `graphql` compiles, runs, and is never called. Shadow
+`graphqlRequest` instead -- `mergeCommitsGraphQL` is an ordinary prototype
+method, so the receiver reaches that one.
+
+**Upstream gives up by returning `undefined`, and `mergeCommitIterator` reads a
+missing response as a branch that does not exist.** It breaks out of its loop,
+so a request that ran out of retries is a *short history* rather than an error
+-- a missing boundary, `needsBootstrap`, a version over the wrong span, nothing
+on screen. The wrapper throws on both ways of giving up, its own and upstream's.
+
+**The page it settles at is remembered per query, and only a page this wrapper
+took away is remembered.** A walk is many requests, so climbing back to a size
+GitHub has already refused pays a failure and a backoff on every page; two
+queries asking for the same number of nodes are not asking for the same work,
+so one settling smaller says nothing about the other; and a consumer that
+legitimately asks for less must not set the size for one that asks for more.
+
+**Upstream's last retry drops straight to a page of one, and this deliberately
+does not.** Halving all the way down keeps every size the ladder reaches a size
+worth keeping, which the ceiling then does keep. Copying the emergency instead
+would turn one bad minute into the setting for the whole run -- a five-page
+commit walk paying five hundred serial requests, each still backfilling file
+lists, with one retry's stderr to explain it.
+
+**Both objects holding a `graphqlRequest` are wrapped.** The commit walk goes
+through the client's own; the release and pull request walks are delegated to a
+`gitHubApi` the client holds, which has one of its own, reached because
+`GitHub.releaseIterator` reads `this.gitHubApi`. Wrapping only the first leaves
+the release walk uncovered -- and every projection asks for the releases, so
+the same failure there lands in the same uncaught pass. `tagIterator` is REST
+pagination and is covered by neither.
+
+## What each merge method actually puts on the target branch
+
+Measured against real release-please, not read off the source
+(`src/merge-projection.test.ts`).
+
+| merge | commits release-please parses |
+|---|---|
+| squash | one: the title as subject, the description as body |
+| rebase | the branch's commits, unchanged |
+| merge | the branch's commits, **plus the merge commit** |
+
+**The merge commit is not a formality, and this is the surprise.** GitHub's
+default `merge_commit_title` is `MERGE_MESSAGE` — "Merge pull request #7 from
+acme/topic", which parses as nothing — but its default `merge_commit_message`
+is `PR_TITLE`. release-please's `splitMessages` splits a message on a blank
+line followed by a Conventional Commit type, so the title below that subject
+parses as a commit of its own. **A merge-commit repository releases from the
+title as well as from the branch.** A projection modelling only the branch
+would understate every such merge. `merge_commit_message: BLANK` removes it;
+`merge_commit_title: PR_TITLE` yields the title twice.
+
+**A `Release-As:` in the description does not survive a merge commit.** With
+`merge_commit_message: PR_BODY` the trailer does reach the merge commit, but
+"Merge pull request #7 from …" is not a Conventional Commit, so
+`parseCommits` throws on the whole message and the footer goes with it —
+silently, which is the same failure mode as a `---` rule below the trailer.
+Set `merge_commit_title: PR_TITLE` and it parses. The existing
+ignored-note warning catches it, because that warning is observed from the
+versions release-please returned rather than mirroring a placement rule.
+
+**Under the default settings it does not reach a commit at all, and that is
+the case the warning nearly missed.** `merge_commit_message: PR_TITLE` is
+GitHub's default and a rebase carries nothing of the description ever, so a
+note written there asks for a version nothing will parse — no version, and,
+while `project.ts` read notes only from the branch's commits, no warning
+either. The body is therefore read as a note source under every merge method,
+last, so a trailer on a real commit is still the one `releaseAs` names. The
+explanation the comment prints has to follow the method too: "check the merge
+box" is the right sentence for a squash and sends the reader to a box that
+decides nothing under a rebase.
+
+**Each commit is attributed by its own files, not the pull request's.**
+`mergeCommitsGraphQL` counts how many commits in a page name the same
+`mergeCommit.oid`; it serves the pull request's file list only where that
+count is 1, which is a squash-merge (and a single-commit rebase). A merge or a
+rebase leaves several commits pointing at one merge commit, so each is
+backfilled from the REST API with its own diff. That is why `BranchCommit`
+carries a file list per commit — one list for the whole pull request would
+bump every package the branch touched by the largest bump any of its commits
+asked for.
+
+A merge commit's own list is the whole branch's diff, which is what its diff
+against the first parent is.
+
+## Which merge the projection models, and why it is only one
+
+`projectedMethod` in `src/merge-method.ts`. Declared, it is what the caller
+declared; under `auto` it is **squash wherever squash is allowed**, and the
+method the repository does allow otherwise.
+
+That is the deliberate answer to the open question in issue #50, which offered
+the alternative of showing both outcomes. Nearly every repository allows
+squash and merge-commit both, so "both outcomes" means two tables, usually
+identical, on every pull request in almost every repository — the shape of a
+comment nobody reads, which is the same argument `mergeAdvisories` already
+makes for staying quiet about a merely-allowed merge commit. A repository that
+really merges the other way says so with `merge-method`.
+
+**Under merge and rebase the title is not an input, and two things follow.**
+`isMalformed` is not applied — a title that is not a Conventional Commit
+describes nothing that will ever be a commit message there, and withholding
+the projection over it withholds the answer to the question the repository
+does ask. And the lines that explain an empty answer must not name the
+title's type: `render`'s `subjects` is what switches them.
+
+**Reading the branch's commits is best-effort, and the fallback is loud.**
+`branchCommits` in git.ts is one `git log` over `<base>..<head>`, and needs
+`fetch-depth: 0` like everything else here. Without it the action pays the API
+one request per commit for the file lists — GitHub has no per-commit files
+endpoint for a pull request — capped at `API_BRANCH_COMMITS` (50). Past that,
+or with neither source available, the projection falls back to the squash
+answer and the advisory says **"does not describe this merge"** rather than
+letting the reader take it for one.
+
+**`<head>` is not `HEAD`, and this is the trap.** On a `pull_request` event
+`actions/checkout` leaves `HEAD` at `refs/pull/N/merge` — GitHub's ephemeral
+merge of the branch into the base. Its *diff* is the pull request's, which is
+why the changed-file list reads it happily; its *commit* is one no merge and
+no rebase ever writes, and it carries the whole branch's files. Reading
+commits from `HEAD` puts it at the front of the projection, where it is inert
+only for as long as its subject fails to parse — a `BEGIN_COMMIT_OVERRIDE`
+body substitutes a parsing message straight into it. `branchHead` in
+action.ts prefers the event's head sha wherever the checkout holds it, which
+it does under either ref, since the branch tip is a parent of that merge
+commit. The `head` input's action.yml default had to become `""` for that:
+the runner supplies a declared default, so `HEAD` written there is
+indistinguishable from a caller asking for `HEAD`.
+
+**Every decline is loud, including the cheap path's.** `--max-count` would
+otherwise hand back the newest `depth` commits and look like the whole branch,
+so `branchCommits` reads one commit past the cap and returns undefined when it
+gets it. The API path declines a long branch out loud; a local read that
+truncated in silence would make the cheap path the quiet one, which is the
+shape of failure this repository dislikes most.
 
 ## Bundling breaks things no unit test sees
 
@@ -466,3 +937,71 @@ they run against `src/`.
 against a fake GitHub over real HTTP. Each of the three was reintroduced to
 confirm it fails on them. **Build before testing**, in `npm run check` and in
 CI, or that test measures the previous build.
+
+## The reads that decide nothing for each other are started together
+
+`action.ts` makes four calls that are not inputs to one another: the merge
+settings, the open pull requests, the changed-file list, and the comment list
+the sticky comment is found in. Serially they were about a second of a
+seven-second step (measured on run 34031929980, issue #67). The first three go
+through one `Promise.all`; the fourth is started before `buildComment` and
+handed to `stick`.
+
+**The dispatch order inside that group is load-bearing, which is why the three
+are started in separate statements rather than in the array literal.**
+`pullRequestFiles` runs `git` through `execFileSync` under the default
+`changed-files: auto`, and a blocking subprocess placed in front of the two
+fetches holds them undispatched until it returns -- losing most of the win, in
+silence. Nothing tests it: `action.test.ts` runs with `changed-files: api`, so
+in the suite that call is a fetch like the others and the barrier below is met
+whatever the order.
+
+**Both inputs are checked before any of it starts.** `merge-method` and
+`changed-files` used to be validated inside the reads that consume them, which
+under `Promise.all` means three requests are already in flight when the run
+throws. `mergeMethodInput` and `changedFilesSource` check them first, in the
+order the reads would have raised them, so the error is the one it always was.
+
+**A read started early and awaited late must not be left to reject.** Nothing
+awaits the comment list until the projection has been rendered, which is
+seconds later, so a rejection in between is an *unhandled* one -- and that
+fails the run, over a read that is allowed to fail, before the projection it
+has nothing to do with is written. `prefetchComments` folds a failure to
+`undefined` and `stick` reads for itself when it is handed that, so the
+failure still surfaces exactly where it did before: from `post`, which
+downgrades a token that cannot write to a warning. `commentListStatus` in the
+fake drives it, and without the `.catch` that test fails the run rather than
+the assertion.
+
+**Finding nothing in that list is confirmed by a second read, and finding
+something is not.** The window between the read and the write went from a
+round trip to the whole projection, and an absence is the one answer that
+decides an *action* rather than a body: two runs whose windows overlap both
+see none and both create, `findSticky` serves the first of the two from then
+on, and the second is left showing a stale projection that nothing will ever
+edit or remove. The example workflow's `concurrency:` block exists because a
+title edit and a push do land together. So `stick` re-reads when a handed-over
+list yields no comment -- once, on a pull request's first comment -- and
+trusts it the rest of the time, which is the case the head start was for.
+
+That first run is a round trip *worse* than not starting early at all: the
+confirming read happens after the projection and overlaps nothing, so it pays
+for a head start it then repeats. Every later event on the pull request wins
+back one round trip, which is the trade, but the first one loses one.
+
+**Arrival order does not prove concurrency**, which is the trap in testing
+this: a serial caller asks in the same order a concurrent one does, so
+`requests` cannot tell them apart. The fake takes a `concurrent` list of
+`METHOD /path` calls and holds each until all of them are in flight, which is
+a fact only a concurrent caller produces. Three things that barrier has to get
+right, all of them found by review rather than by a failing test and each now
+pinned by one in `fake-github-server.test.ts`: it opens on a timer as well, so
+a serial caller reports no overlap rather than hanging the suite; each timer
+is tied to the round that armed it, or a stale one opens the next round early
+(the test that catches that reads 52ms where it wants more than 150); and a
+list of one is refused, since one name is met by its own arrival and would
+report overlap that never happened.
+
+**The annotations from those three reads no longer have a fixed order.** They
+race on response arrival. No test asserts on their order today -- don't write
+one.

@@ -50,6 +50,15 @@ export interface FakeRepo {
   }[];
   /** releases are the published releases, newest first. */
   releases: { tagName: string; sha: string }[];
+  /**
+   * tags are the git tags, which default to one per release.
+   *
+   * They are a separate list because release-please reaches them only when a
+   * release does not resolve a component -- `backfillReleasesFromTags`, and
+   * `latestReleaseVersion`'s last fallback -- so a repository that has tags
+   * and no releases is the only shape that exercises the recovery at all.
+   */
+  tags?: { name: string; sha: string }[];
   /** pullRequests are the open pull requests the REST list endpoint serves,
    * which is where the action finds the standing release pull requests. */
   pullRequests?: { headRefName: string; url: string }[];
@@ -57,10 +66,29 @@ export interface FakeRepo {
    * REST endpoint the action falls back to when the checkout cannot be
    * diffed. Absent means the pull request has none. */
   prFiles?: Record<number, string[]>;
+  /**
+   * prCommits are the commits on a pull request's branch, oldest first as
+   * GitHub lists them. They are what a merge or a rebase puts on the target
+   * branch, and the action reads them here when the checkout is too shallow
+   * to hold them -- one further request each for their files, which is why
+   * the fake serves those from the same list.
+   */
+  prCommits?: Record<number, { sha: string; message: string; files: string[] }[]>;
+  /**
+   * merge overrides the repository's merge-button settings, which decide
+   * which merge the projection models. The default is a squash-merging
+   * repository.
+   */
+  merge?: Record<string, unknown>;
   /** commentStatus forces a status on the comment write endpoints. 403 and
    * 404 are what a fork's read-only token gets and are meant to cost the
    * comment rather than the run; anything else is a real failure. */
   commentStatus?: number;
+  /** commentListStatus forces a status on the comment *list*, which the
+   * action reads ahead of the projection it does not depend on. A failure
+   * there is meant to reach the run where the read it replaces would have
+   * reached it, and not before. */
+  commentListStatus?: number;
   /** pullsStatus forces a status on the open pull request list, whose failure
    * is meant to cost the release pull request links and nothing else. */
   pullsStatus?: number;
@@ -68,6 +96,28 @@ export interface FakeRepo {
    * settings are read from, whose failure is meant to cost the merge
    * advisory and nothing else. */
   repositoryStatus?: number;
+  /**
+   * graphqlFailures answers the first N requests for a named operation the
+   * way GitHub reports a failure on its own side: HTTP **200**, carrying an
+   * `errors` array and no data.
+   *
+   * The status is the point. That shape is what release-please's own retry
+   * loop declines to retry, because the error Octokit raises for it carries no
+   * `status` to compare against the 502 that loop knows.
+   *
+   * Keyed by operation name, as `graphql` records them.
+   */
+  graphqlFailures?: Record<string, number>;
+  /**
+   * concurrent names paths the fake holds until all of them are in flight at
+   * once, which is how a test tells reads that were started together from
+   * reads that were started one after another. Arrival order proves nothing:
+   * a serial caller asks in the same order a concurrent one does.
+   *
+   * Entries are the `METHOD /path` strings `requests` records, so a path the
+   * action both reads and writes can be named on one of the two.
+   */
+  concurrent?: readonly string[];
 }
 
 /** FakeGitHub is a running fake, and the record of what was asked of it. */
@@ -76,19 +126,94 @@ export interface FakeGitHub {
   url: string;
   /** requests are every path requested, in order. */
   requests: string[];
+  /**
+   * graphql names every GraphQL operation asked of the fake, in order, by the
+   * name release-please gave it: `releases`, `mergedPullRequests` or
+   * `pullRequestsSince`. Read off the query rather than mapped from a list
+   * here, so an operation nobody has seen yet is reported rather than
+   * miscounted as one of these.
+   *
+   * `requests` cannot tell them apart -- every one of them is a POST to the
+   * one `/graphql` path -- and how many times a projection lists the
+   * repository's releases is exactly what issue #66 was about.
+   */
+  graphql: string[];
+  /**
+   * graphqlPages is the page size each GraphQL request asked for, in order and
+   * aligned with `graphql`, and undefined for an operation that names none.
+   *
+   * It is upstream's `num` variable, which is the thing a retry shrinks: the
+   * assertion that a retried page was smaller than the one that failed cannot
+   * be made from the operation name alone.
+   */
+  graphqlPages: (number | undefined)[];
   /** comments are the issue comments as the fake now holds them, so a test
    * can assert what was posted rather than only that a post happened. */
   comments: { id: number; body: string }[];
+  /** overlapped says whether every call named by `concurrent` was in flight
+   * at the same moment. False when none were named. */
+  overlapped(): boolean;
   close(): Promise<void>;
 }
 
 const BLOB = (path: string) => `blob-${Buffer.from(path).toString("hex")}`;
 
+/**
+ * BARRIER_MS is how long a held request waits for the rest of its set.
+ *
+ * The barrier has to open on a timer as well as on the last arrival, or a
+ * caller that reads serially would deadlock against it and the test would
+ * report a timeout rather than the serial read it found. Opening late instead
+ * costs a failing test this long per held request and says what it means.
+ */
+const BARRIER_MS = 250;
+
 /** startFakeGitHub serves `repo` until closed. */
 export async function startFakeGitHub(repo: FakeRepo): Promise<FakeGitHub> {
   const requests: string[] = [];
+  const graphql: string[] = [];
+  const graphqlPages: (number | undefined)[] = [];
+  const failuresLeft = new Map(Object.entries(repo.graphqlFailures ?? {}));
   const comments: { id: number; body: string }[] = [];
   let nextCommentId = 100;
+
+  // See FakeRepo.concurrent. `waiting` is what has arrived and not yet been
+  // answered; the set is met when every named call is among it.
+  const named = new Set(repo.concurrent ?? []);
+  // One name is met by its own arrival, so a barrier of one would report
+  // overlap that never happened -- a false positive in the one facility whose
+  // whole purpose is proving something arrival order cannot.
+  if (repo.concurrent && named.size < 2) {
+    throw new Error("`concurrent` needs at least two distinct calls");
+  }
+  let waiting: { call: string; open: () => void }[] = [];
+  let overlapped = false;
+  // Which batch is filling. A barrier that opens on its last arrival leaves
+  // the timers its earlier arrivals set still armed, and `openAll` releases
+  // whatever is waiting when they fire rather than what scheduled them. A
+  // second round -- a test that names a call the action makes twice, or that
+  // drives the action twice against one fake -- would be opened early by a
+  // stale timer from the first, and would fail with nothing to point at.
+  let round = 0;
+  const openAll = () => {
+    round++;
+    const held = waiting;
+    waiting = [];
+    for (const one of held) one.open();
+  };
+  const hold = (call: string) =>
+    new Promise<void>((resolve) => {
+      waiting.push({ call, open: resolve });
+      if (new Set(waiting.map((one) => one.call)).size === named.size) {
+        overlapped = true;
+        openAll();
+        return;
+      }
+      const mine = round;
+      setTimeout(() => {
+        if (round === mine) openAll();
+      }, BARRIER_MS).unref();
+    });
 
   const commitNodes = repo.commits.map((commit) => ({
     associatedPullRequests: {
@@ -118,6 +243,7 @@ export async function startFakeGitHub(repo: FakeRepo): Promise<FakeGitHub> {
   // of them carries pagination in the query string.
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const FILES = new RegExp(`^${escaped}/pulls/(\\d+)/files$`);
+  const PR_COMMITS = new RegExp(`^${escaped}/pulls/(\\d+)/commits$`);
   const COMMENTS = new RegExp(`^${escaped}/issues/\\d+/comments$`);
   const COMMENT = new RegExp(`^${escaped}/issues/comments/(\\d+)$`);
   const COMMIT_FILES = new RegExp(`^${escaped}/commits/([0-9a-z]+)$`);
@@ -125,156 +251,241 @@ export async function startFakeGitHub(repo: FakeRepo): Promise<FakeGitHub> {
   const server: Server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
+    req.on("end", async () => {
       const url = req.url ?? "";
-      requests.push(`${req.method} ${url.split("?")[0]}`);
-      const send = (code: number, payload: unknown) => {
-        res.writeHead(code, { "content-type": "application/json" });
-        res.end(JSON.stringify(payload));
-      };
+      const path = url.split("?")[0] ?? "";
+      const call = `${req.method} ${path}`;
+      requests.push(call);
+      if (named.has(call)) await hold(call);
+      try {
+        const send = (code: number, payload: unknown) => {
+          res.writeHead(code, { "content-type": "application/json" });
+          res.end(JSON.stringify(payload));
+        };
 
-      // GraphQL, at exactly one path. An endpoint assembled as
-      // `/graphql/graphql` falls through to the 404 below, which is the whole
-      // point of serving this over real HTTP.
-      if (url === "/graphql") {
-        const query = String(JSON.parse(body || "{}").query ?? "");
-        if (query.includes("query releases")) {
+        // GraphQL, at exactly one path. An endpoint assembled as
+        // `/graphql/graphql` falls through to the 404 below, which is the whole
+        // point of serving this over real HTTP.
+        if (url === "/graphql") {
+          const sent = JSON.parse(body || "{}");
+          const query = String(sent.query ?? "");
+          const operation = /query\s+(\w+)/.exec(query)?.[1] ?? "unknown";
+          graphql.push(operation);
+          // Octokit sends everything that is not the query itself under
+          // `variables`, so the page size is one level in from where the
+          // caller wrote it.
+          const page = (sent.variables ?? sent).num;
+          graphqlPages.push(typeof page === "number" ? page : undefined);
+          const left = failuresLeft.get(operation) ?? 0;
+          if (left > 0) {
+            failuresLeft.set(operation, left - 1);
+            // GitHub's own wording and its own status: a 200 whose body says
+            // the query did not finish. See FakeRepo.graphqlFailures.
+            return send(200, {
+              data: null,
+              errors: [
+                {
+                  message:
+                    "Something went wrong while executing your query on" +
+                    " 2026-09-09T14:35:34Z. Please include `7019:2BB932` when" +
+                    " reporting this issue.",
+                },
+              ],
+            });
+          }
+          if (operation === "releases") {
+            return send(200, {
+              data: {
+                repository: {
+                  releases: {
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: repo.releases.map((release) => ({
+                      name: release.tagName,
+                      // `tag.name`, which is the field release-please reads:
+                      // `tagName: release.tag ? release.tag.name : 'unknown'`.
+                      // A node carrying a bare `tagName` instead reaches it as
+                      // the string `unknown`, `TagName.parse` rejects it, and
+                      // every release resolves nothing -- so the fake looked
+                      // like a repository whose releases all fail to parse and
+                      // whose components are recovered from tags. That is a
+                      // working projection, which is why it went unnoticed.
+                      tag: { name: release.tagName },
+                      url: "",
+                      description: "",
+                      isDraft: false,
+                      databaseId: 1,
+                      tagCommit: { oid: release.sha },
+                    })),
+                  },
+                },
+              },
+            });
+          }
+          // Both commit-walking queries share a shape.
           return send(200, {
             data: {
               repository: {
-                releases: {
-                  pageInfo: { hasNextPage: false, endCursor: null },
-                  nodes: repo.releases.map((release) => ({
-                    name: release.tagName,
-                    tagName: release.tagName,
-                    url: "",
-                    description: "",
-                    isDraft: false,
-                    databaseId: 1,
-                    tagCommit: { oid: release.sha },
-                  })),
+                ref: {
+                  target: {
+                    history: {
+                      nodes: commitNodes,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  },
                 },
               },
             },
           });
         }
-        // Both commit-walking queries share a shape.
-        return send(200, {
-          data: {
-            repository: {
-              ref: {
-                target: {
-                  history: {
-                    nodes: commitNodes,
-                    pageInfo: { hasNextPage: false, endCursor: null },
-                  },
-                },
-              },
-            },
-          },
-        });
-      }
 
-      const path = url.split("?")[0] ?? "";
-      if (path === `${base}/pulls`) {
-        if (repo.pullsStatus) return send(repo.pullsStatus, { message: "no" });
-        return send(
-          200,
-          (repo.pullRequests ?? []).map((pr) => ({
-            html_url: pr.url,
-            head: { ref: pr.headRefName },
-          })),
-        );
-      }
-      const files = FILES.exec(path);
-      if (files) {
-        return send(
-          200,
-          (repo.prFiles?.[Number(files[1])] ?? []).map((filename) => ({
-            filename,
-          })),
-        );
-      }
-      if (COMMENTS.test(path)) {
-        if (req.method === "GET") return send(200, comments);
-        if (repo.commentStatus) {
-          return send(repo.commentStatus, { message: "no" });
+        if (path === `${base}/pulls`) {
+          if (repo.pullsStatus) return send(repo.pullsStatus, { message: "no" });
+          return send(
+            200,
+            (repo.pullRequests ?? []).map((pr) => ({
+              html_url: pr.url,
+              head: { ref: pr.headRefName },
+            })),
+          );
         }
-        const created = {
-          id: nextCommentId++,
-          body: String(JSON.parse(body || "{}").body ?? ""),
-        };
-        comments.push(created);
-        return send(201, created);
-      }
-      const edit = COMMENT.exec(path);
-      if (edit) {
-        if (repo.commentStatus) {
-          return send(repo.commentStatus, { message: "no" });
+        const files = FILES.exec(path);
+        if (files) {
+          return send(
+            200,
+            (repo.prFiles?.[Number(files[1])] ?? []).map((filename) => ({
+              filename,
+            })),
+          );
         }
-        const existing = comments.find((c) => c.id === Number(edit[1]));
-        if (!existing) return send(404, { message: "no comment" });
-        existing.body = String(JSON.parse(body || "{}").body ?? "");
-        return send(200, existing);
-      }
+        const prCommits = PR_COMMITS.exec(path);
+        if (prCommits) {
+          // Paged as GitHub pages it, because how many pages the action asks
+          // for is part of what it costs a repository: a caller that has
+          // already decided a branch is too long to model must stop asking.
+          const query = new URLSearchParams(url.split("?")[1] ?? "");
+          const perPage = Number(query.get("per_page") ?? "30");
+          const page = Number(query.get("page") ?? "1");
+          const all = repo.prCommits?.[Number(prCommits[1])] ?? [];
+          return send(
+            200,
+            all.slice((page - 1) * perPage, page * perPage).map((commit) => ({
+              sha: commit.sha,
+              commit: { message: commit.message },
+            })),
+          );
+        }
+        if (COMMENTS.test(path)) {
+          if (req.method === "GET") {
+            if (repo.commentListStatus) {
+              return send(repo.commentListStatus, { message: "no" });
+            }
+            return send(200, comments);
+          }
+          if (repo.commentStatus) {
+            return send(repo.commentStatus, { message: "no" });
+          }
+          const created = {
+            id: nextCommentId++,
+            body: String(JSON.parse(body || "{}").body ?? ""),
+          };
+          comments.push(created);
+          return send(201, created);
+        }
+        const edit = COMMENT.exec(path);
+        if (edit) {
+          if (repo.commentStatus) {
+            return send(repo.commentStatus, { message: "no" });
+          }
+          const existing = comments.find((c) => c.id === Number(edit[1]));
+          if (!existing) return send(404, { message: "no comment" });
+          existing.body = String(JSON.parse(body || "{}").body ?? "");
+          return send(200, existing);
+        }
 
-      const commit = COMMIT_FILES.exec(path);
-      if (commit) {
-        // What release-please backfills a file list with when GraphQL gave it
-        // no pull request to read one from.
-        const found = repo.commits.find((c) => c.sha === commit[1]);
-        if (!found) return send(404, { message: "no commit" });
-        return send(200, {
-          sha: found.sha,
-          files: found.files.map((filename) => ({ filename })),
-        });
-      }
-
-      if (url.startsWith(`${base}/git/trees/`)) {
-        return send(200, {
-          sha: "tree",
-          truncated: false,
-          tree: Object.keys(repo.files).map((path) => ({
-            path,
-            mode: "100644",
-            type: "blob",
-            sha: BLOB(path),
-            size: repo.files[path]!.length,
-          })),
-        });
-      }
-      if (url.startsWith(`${base}/git/blobs/`)) {
-        const sha = url.split("/").pop() ?? "";
-        const path = Object.keys(repo.files).find((p) => BLOB(p) === sha);
-        if (path === undefined) return send(404, { message: "no blob" });
-        return send(200, {
-          sha,
-          encoding: "base64",
-          content: Buffer.from(repo.files[path]!, "utf8").toString("base64"),
-        });
-      }
-      if (url.startsWith(`${base}/tags`)) {
-        // release-please falls back to tags when the release list does not
-        // resolve a version, so a fake that omits them changes the answer.
-        return send(
-          200,
-          repo.releases.map((release) => ({
-            name: release.tagName,
-            commit: { sha: release.sha },
-          })),
-        );
-      }
-      if (url === base) {
-        if (repo.repositoryStatus) {
-          return send(repo.repositoryStatus, { message: "no" });
+        const commit = COMMIT_FILES.exec(path);
+        if (commit) {
+          // What release-please backfills a file list with when GraphQL gave it
+          // no pull request to read one from.
+          const found =
+            repo.commits.find((c) => c.sha === commit[1]) ??
+            Object.values(repo.prCommits ?? {})
+              .flat()
+              .find((c) => c.sha === commit[1]);
+          if (!found) return send(404, { message: "no commit" });
+          return send(200, {
+            sha: found.sha,
+            files: found.files.map((filename) => ({ filename })),
+          });
         }
-        return send(200, {
-          default_branch: repo.branch,
-          allow_squash_merge: true,
-          squash_merge_commit_title: "PR_TITLE",
-        });
+
+        if (url.startsWith(`${base}/git/trees/`)) {
+          return send(200, {
+            sha: "tree",
+            truncated: false,
+            tree: Object.keys(repo.files).map((path) => ({
+              path,
+              mode: "100644",
+              type: "blob",
+              sha: BLOB(path),
+              size: repo.files[path]!.length,
+            })),
+          });
+        }
+        if (url.startsWith(`${base}/git/blobs/`)) {
+          const sha = url.split("/").pop() ?? "";
+          const path = Object.keys(repo.files).find((p) => BLOB(p) === sha);
+          if (path === undefined) return send(404, { message: "no blob" });
+          return send(200, {
+            sha,
+            encoding: "base64",
+            content: Buffer.from(repo.files[path]!, "utf8").toString("base64"),
+          });
+        }
+        if (url.startsWith(`${base}/tags`)) {
+          // release-please falls back to tags when a release does not resolve
+          // a component, and computes from them a version it found nowhere
+          // else. A fake that omits them changes the answer -- see "recovers
+          // a version from a tag when no release resolves" in history.test.ts,
+          // which is the test that keeps this payload load-bearing.
+          return send(
+            200,
+            (
+              repo.tags ??
+              repo.releases.map((release) => ({
+                name: release.tagName,
+                sha: release.sha,
+              }))
+            ).map((tag) => ({ name: tag.name, commit: { sha: tag.sha } })),
+          );
+        }
+        if (url === base) {
+          if (repo.repositoryStatus) {
+            return send(repo.repositoryStatus, { message: "no" });
+          }
+          return send(200, {
+            default_branch: repo.branch,
+            allow_squash_merge: true,
+            squash_merge_commit_title: "PR_TITLE",
+            ...repo.merge,
+          });
+        }
+        return send(404, { message: `fake has no ${url}` });
+      } catch (error) {
+        // The handler is async, so a bug in the fake would otherwise reject a
+        // promise nobody holds and leave the request it was serving hanging:
+        // an unhandled rejection blamed on whichever test was running, and a
+        // `fetch` that settles only when the suite times out.
+        if (res.headersSent) {
+          // A throw between the head and the body -- the only place that
+          // ordering exists is `send` itself. The status is already out, so
+          // the only thing left that keeps the client from hanging is closing
+          // the socket.
+          res.destroy();
+        } else {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ message: `fake failed: ${String(error)}` }));
+        }
       }
-      return send(404, { message: `fake has no ${url}` });
     });
   });
 
@@ -283,7 +494,10 @@ export async function startFakeGitHub(repo: FakeRepo): Promise<FakeGitHub> {
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
+    graphql,
+    graphqlPages,
     comments,
+    overlapped: () => overlapped,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

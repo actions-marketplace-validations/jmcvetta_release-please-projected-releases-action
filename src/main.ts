@@ -11,11 +11,24 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { changedFiles } from "./git.js";
-import { DEFAULT_CONFIG_FILE, DEFAULT_MANIFEST_FILE } from "./project.js";
-import type { PlainConfig } from "./project.js";
+import { branchCommits, changedFiles } from "./git.js";
+import {
+  isMergeMethod,
+  mergeAdvisories,
+  mergeCommitFor,
+  MERGE_METHODS,
+  projectedMethod,
+} from "./merge-method.js";
+import { plainConfig } from "./plain.js";
+import type { BranchCommit } from "./pr-view.js";
+import {
+  COMMIT_SEARCH_DEPTH,
+  DEFAULT_CONFIG_FILE,
+  DEFAULT_MANIFEST_FILE,
+} from "./project.js";
 import { loadReleasePrs } from "./release-prs.js";
 import { buildComment, quietLogger } from "./run.js";
+import { AUTO } from "./workflow.js";
 
 /**
  * cli renders one projection from command line flags. Exported rather than
@@ -42,6 +55,9 @@ export async function cli(argv: string[]): Promise<void> {
       "repo-root": { type: "string", default: "." },
       "config-file": { type: "string", default: DEFAULT_CONFIG_FILE },
       "manifest-file": { type: "string", default: DEFAULT_MANIFEST_FILE },
+      // The release workflow this repository's plain-mode inputs are a second
+      // copy of: `auto` finds it, `off` reads nothing, a path names it.
+      "release-workflow": { type: "string", default: AUTO },
       "release-prs": { type: "string" },
       "release-branch-prefix": { type: "string" },
       // Plain mode: one package, configured here, no config or manifest file
@@ -55,10 +71,19 @@ export async function cli(argv: string[]): Promise<void> {
       // which is the half that differs from release-please's own default.
       "include-component-in-tag": { type: "string" },
       "tag-separator": { type: "string" },
+      // Reach release-please only in this mode, exactly as on
+      // release-please-action, which passes them to `Manifest.fromConfig`
+      // and to nothing else.
+      "versioning-strategy": { type: "string" },
+      "release-as": { type: "string" },
       // The changed-file list, supplied rather than diffed. For driving the
       // tool where there is no checkout to diff -- a test, or a projection
       // reconstructed after the fact from a merge's file list.
       files: { type: "string" },
+      // No `auto` here: reading the repository's settings takes the API
+      // client the action has and this does not. Unset is squash-merge, which
+      // is what `auto` resolves to for every repository that allows one.
+      "merge-method": { type: "string", default: "squash" },
       "visible-types": { type: "string" },
       "hidden-types": { type: "string" },
       "api-url": { type: "string" },
@@ -67,14 +92,6 @@ export async function cli(argv: string[]): Promise<void> {
       out: { type: "string" },
     },
   });
-
-  /** bool reads a flag written as `--flag=true` or `--flag=false`. */
-  const bool = (name: string, value: string): boolean => {
-    const text = value.toLowerCase();
-    if (text === "true") return true;
-    if (text === "false") return false;
-    throw new Error(`--${name} must be true or false, got \`${value}\``);
-  };
 
   const title = values.title;
   if (!title) throw new Error("--title is required");
@@ -92,38 +109,62 @@ export async function cli(argv: string[]): Promise<void> {
   const visible = list(values["visible-types"]);
   const hidden = list(values["hidden-types"]);
 
-  const releaseType = values["release-type"];
-  const plain: PlainConfig | undefined = releaseType
-    ? {
-        releaseType: releaseType as PlainConfig["releaseType"],
-        ...(values["package-path"] ? { path: values["package-path"] } : {}),
-        ...(values.component ? { component: values.component } : {}),
-        ...(values["tag-separator"]
-          ? { tagSeparator: values["tag-separator"] }
-          : {}),
-        ...(values["include-component-in-tag"] === undefined
-          ? {}
-          : { includeComponentInTag: bool("include-component-in-tag", values["include-component-in-tag"]) }),
-      }
-    : undefined;
+  const plain = plainConfig(
+    (name) => values[name as keyof typeof values] as string | undefined,
+    (name) => `--${name}`,
+  );
+
+  const body = values["body-file"]
+    ? readFileSync(values["body-file"], "utf8")
+    : "";
+  const declared = values["merge-method"];
+  if (!isMergeMethod(declared) || declared === "auto") {
+    throw new Error(
+      `--merge-method must be one of ${MERGE_METHODS.filter((m) => m !== "auto").join(", ")}`,
+    );
+  }
+  const method = projectedMethod({ method: declared });
+  const files =
+    list(values.files) ??
+    changedFiles(values["diff-base"] || `origin/${base}`, values.head);
+  const branch =
+    method === "squash"
+      ? undefined
+      : branchInput(method, {
+          base: values["diff-base"] || `origin/${base}`,
+          head: values.head,
+          files,
+          pr: {
+            number: Number(values.number) || 0,
+            title,
+            body,
+            headLabel: `${owner}/${values["head-branch"] || values.head}`,
+            headSha: values["head-sha"] || "0".repeat(40),
+          },
+        });
+  const advisories = mergeAdvisories({
+    method: declared,
+    modelled: branch ? method : "squash",
+  });
 
   const outcome = await buildComment({
     owner,
     repo: name,
     token: values.token,
     title,
-    body: values["body-file"] ? readFileSync(values["body-file"], "utf8") : "",
+    body,
     number: Number(values.number) || 0,
     base,
     headSha: values["head-sha"],
     headBranch: values["head-branch"],
-    files:
-      list(values.files) ??
-      changedFiles(values["diff-base"] || `origin/${base}`, values.head),
+    files,
+    ...(branch ? { branch } : {}),
+    ...(advisories.length ? { advisories } : {}),
     repoRoot: values["repo-root"],
     baseRef: values["diff-base"] || `origin/${base}`,
     configFile: values["config-file"],
     manifestFile: values["manifest-file"],
+    releaseWorkflow: values["release-workflow"],
     releasePrs: values["release-prs"]
       ? loadReleasePrs(
           readFileSync(values["release-prs"], "utf8"),
@@ -145,4 +186,30 @@ export async function cli(argv: string[]): Promise<void> {
 
   if (values.out) writeFileSync(values.out, outcome.body);
   else process.stdout.write(outcome.body);
+}
+
+/**
+ * branchInput reads the commits merging would put on the target branch, for
+ * the command line's checkout. No API fallback here: the command line is run
+ * from a checkout by definition, and one that cannot answer is one to deepen
+ * rather than to pay the API for.
+ */
+function branchInput(
+  method: "merge" | "rebase",
+  options: {
+    base: string;
+    head: string;
+    files: string[];
+    pr: Parameters<typeof mergeCommitFor>[0];
+  },
+): BranchCommit[] | undefined {
+  const commits = branchCommits(
+    options.base,
+    options.head,
+    COMMIT_SEARCH_DEPTH,
+  );
+  if (!commits || commits.length === 0) return undefined;
+  return method === "merge"
+    ? [mergeCommitFor(options.pr, options.files), ...commits]
+    : commits;
 }

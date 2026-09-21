@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.7.1](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.7.0...v0.7.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* retry a GraphQL page GitHub could not finish ([#77](https://github.com/jmcvetta/release-please-projected-releases-action/issues/77)) ([c7224bd](https://github.com/jmcvetta/release-please-projected-releases-action/commit/c7224bdcae7fa45fa2f82591c8f68b1c15b88ffd))
+
+## [0.7.0](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.6.1...v0.7.0) (2026-09-07)
+
+
+### Features
+
+* stop reading the config and manifest from a stale checkout ([#72](https://github.com/jmcvetta/release-please-projected-releases-action/issues/72)) ([c720e39](https://github.com/jmcvetta/release-please-projected-releases-action/commit/c720e39990690521ce060351e88d193faa10d24b))
+
+## [0.6.1](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.6.0...v0.6.1) (2026-09-07)
+
+
+### Performance Improvements
+
+* read the releases and tags once per projection ([#70](https://github.com/jmcvetta/release-please-projected-releases-action/issues/70)) ([b5e20ff](https://github.com/jmcvetta/release-please-projected-releases-action/commit/b5e20fffcf5c6533e271409f068ae6577eaf694b))
+* serve every question about the history from one walk ([#69](https://github.com/jmcvetta/release-please-projected-releases-action/issues/69)) ([ce89f4e](https://github.com/jmcvetta/release-please-projected-releases-action/commit/ce89f4eb90c22c7ee5f5077b34a38d00e72de4d8))
+* start the independent API reads together ([#68](https://github.com/jmcvetta/release-please-projected-releases-action/issues/68)) ([0535156](https://github.com/jmcvetta/release-please-projected-releases-action/commit/0535156d14d1b4d0318f3b576fe98b39193b86e5))
+
+## [0.6.0](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.5.0...v0.6.0) (2026-09-06)
+
+
+### Features
+
+* project merge-commit and rebase repositories, not only squash ([#62](https://github.com/jmcvetta/release-please-projected-releases-action/issues/62)) ([e73e3af](https://github.com/jmcvetta/release-please-projected-releases-action/commit/e73e3af0225bf27167a5e85df8f2b87730bdf6cd))
+
+## [0.5.0](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.4.0...v0.5.0) (2026-09-06)
+
+
+### Features
+
+* check the plain-mode inputs against the release workflow ([#61](https://github.com/jmcvetta/release-please-projected-releases-action/issues/61)) ([3aae640](https://github.com/jmcvetta/release-please-projected-releases-action/commit/3aae640e5fa6358b1b0ec1de2da8406759634715))
+
+## [0.4.0](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.3.1...v0.4.0) (2026-09-05)
+
+
+### Features
+
+* complete the plain-mode inputs and warn on a mode mismatch ([#59](https://github.com/jmcvetta/release-please-projected-releases-action/issues/59)) ([e38774d](https://github.com/jmcvetta/release-please-projected-releases-action/commit/e38774d765f57aa1e1d52c875d0bd3a975af108c))
+
+## [0.3.1](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.3.0...v0.3.1) (2026-09-04)
+
+
+### Performance Improvements
+
+* read the history once and take commit file lists from git ([#57](https://github.com/jmcvetta/release-please-projected-releases-action/issues/57)) ([a6f571f](https://github.com/jmcvetta/release-please-projected-releases-action/commit/a6f571fb86f657b34e58667cf7df007b162cfa06))
+
 ## [0.3.0](https://github.com/jmcvetta/release-please-projected-releases-action/compare/v0.2.3...v0.3.0) (2026-09-04)
 
 

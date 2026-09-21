@@ -9,12 +9,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cli } from "./main.js";
 import { startFakeGitHub } from "./fake-github-server.fixture.js";
 import type { FakeGitHub, FakeRepo } from "./fake-github-server.fixture.js";
+
+/** RELEASED_SHA is the commit the fixture's release points at, which is
+ * what bounds the commit walk. */
+const RELEASED_SHA = "1".repeat(40);
 
 const REPO: FakeRepo = {
   owner: "acme",
@@ -50,7 +55,12 @@ afterEach(async () => {
 const tmp = () => mkdtempSync(join(tmpdir(), "projected-releases-"));
 
 /** flags are the ordinary invocation. `--files` is supplied rather than
- * diffed, so nothing here depends on the checkout it runs in. */
+ * diffed, `--release-workflow off` reads no workflow and `--repo-root` names
+ * an empty directory, so nothing here depends on the checkout it runs in --
+ * which is this repository, whose own release workflow the comparison would
+ * otherwise find and have opinions about, and whose own
+ * release-please-config.json plain mode would report as unread. Both flags are
+ * covered below, against checkouts written for them. */
 async function flags(
   extra: string[] = [],
   over: Partial<FakeRepo> = {},
@@ -66,6 +76,11 @@ async function flags(
     "--number", "7",
     "--head-sha", "c".repeat(40),
     "--files", "src/b.ts",
+    "--release-workflow", "off",
+    // A root of the caller's own wins outright rather than being appended
+    // after this one: two of the same flag on one line would leave which root
+    // is read to parseArgs rather than to this file.
+    ...(extra.includes("--repo-root") ? [] : ["--repo-root", tmp()]),
     ...extra,
   ];
 }
@@ -77,6 +92,10 @@ describe("cli", () => {
     await cli(await flags());
     expect(printed()).toContain("| **1.0.0** |");
     expect(printed()).toContain("Changelog preview");
+    // What the fixture's empty `--repo-root` buys, and the only thing that
+    // says so: plain mode reports config files it finds and did not read, and
+    // the checkout this suite runs in has a pair of its own.
+    expect(printed()).not.toContain("release-please-config.json");
   });
 
   it("writes to a file instead when asked", async () => {
@@ -93,6 +112,68 @@ describe("cli", () => {
     writeFileSync(body, "Release-As: 9.9.9\n");
     await cli(await flags(["--body-file", body]));
     expect(printed()).toContain("9.9.9");
+  });
+
+  it("says so when it cannot read the commits a merge would write", async () => {
+    // An empty range in whatever checkout this suite runs in, which is the
+    // same answer a shallow one gives: nothing to model the merge from.
+    await cli(
+      await flags([
+        "--merge-method", "rebase",
+        "--diff-base", "HEAD",
+        "--head", "HEAD",
+      ]),
+    );
+    expect(printed()).toContain("does not describe this merge");
+  });
+
+  it("refuses `auto`, which needs a repository read it does not make", async () => {
+    await expect(
+      cli(await flags(["--merge-method", "auto"])),
+    ).rejects.toThrow(/--merge-method must be one of/);
+  });
+
+  it("projects a merge commit from a checkout it is run inside", async () => {
+    // The whole command line path for a merge-commit repository: the branch's
+    // commits out of git, the merge commit spelled on top, and the title
+    // reaching release-please through the merge commit's body.
+    const dir = tmp();
+    const git = (args: string[]) =>
+      execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+    git(["init", "-q", "-b", "master"]);
+    git(["config", "user.email", "test@example.com"]);
+    git(["config", "user.name", "Test"]);
+    writeFileSync(join(dir, "a.txt"), "a\n");
+    git(["add", "a.txt"]);
+    git(["commit", "-q", "-m", "chore: start"]);
+    git(["checkout", "-q", "-b", "topic"]);
+    // The same path `--files` names, so the branch commit and the pull
+    // request agree about what changed.
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "b.ts"), "b\n");
+    git(["add", "src/b.ts"]);
+    git(["commit", "-q", "-m", "fix: a crash"]);
+
+    const cwd = process.cwd();
+    try {
+      process.chdir(dir);
+      await cli(
+        await flags([
+          "--merge-method", "merge",
+          "--diff-base", "master",
+          "--head", "topic",
+        ]),
+      );
+    } finally {
+      process.chdir(cwd);
+    }
+
+    const out = printed();
+    expect(out).toContain(", plus a merge commit above them");
+    // The branch's `fix:` and, through the merge commit's body, the `feat:`
+    // title -- so a minor rather than the patch the branch alone would cut.
+    expect(out).toContain("a crash");
+    expect(out).toContain("a thing");
   });
 
   it("requires the two things it cannot guess", async () => {
@@ -144,10 +225,127 @@ describe("cli", () => {
     expect(printed()).not.toContain("acme-api");
   });
 
+  // The action reads its release workflow through the same code, and the two
+  // entry points reading one option from different places is the pair that
+  // drifts -- which is what this file is for.
+  it("compares the plain-mode flags with the release workflow it is pointed at", async () => {
+    const root = tmp();
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(
+      join(root, ".github", "workflows", "release.yml"),
+      "jobs:\n  release:\n    steps:\n" +
+        "      - uses: googleapis/release-please-action@v5\n" +
+        "        with:\n          release-type: node\n" +
+        "          versioning-strategy: always-bump-patch\n",
+    );
+    await cli(
+      await flags(["--repo-root", root, "--release-workflow", "auto"]),
+    );
+    expect(printed()).toContain("`versioning-strategy: always-bump-patch`");
+  });
+
   it("refuses a value for it that is neither", async () => {
     await expect(
       cli(await flags(["--include-component-in-tag", "yes"])),
     ).rejects.toThrow(/--include-component-in-tag must be true or false/);
+  });
+
+  // Everything below is measured against a repository that has already
+  // released 1.0.0, because the first release comes from the strategy's
+  // initial version and would hide what the bump did.
+  const released: Partial<FakeRepo> = {
+    commits: [{ sha: RELEASED_SHA, message: "chore: release 1.0.0", files: [] }],
+    releases: [{ tagName: "v1.0.0", sha: RELEASED_SHA }],
+    files: { "package.json": JSON.stringify({ name: "widgets", version: "1.0.0" }) },
+  };
+
+  it("bumps the way the default strategy does when nothing says otherwise", async () => {
+    await cli(await flags([], released));
+    expect(printed()).toContain("**1.1.0**");
+  });
+
+  // The gap this closes: a release workflow passing `versioning-strategy`
+  // releases a feature as a patch, and a projection with no such input said
+  // minor -- the right answer for a differently configured repository.
+  it("bumps as the versioning strategy says, not as the type implies", async () => {
+    await cli(await flags(["--versioning-strategy", "always-bump-patch"], released));
+    expect(printed()).toContain("**1.0.1**");
+    expect(printed()).not.toContain("1.1.0");
+  });
+
+  it("releases the version a sticky release-as forces", async () => {
+    await cli(await flags(["--release-as", "2.4.0"], released));
+    expect(printed()).toContain("**2.4.0**");
+  });
+
+  // The command line used to build the plain configuration itself and
+  // validated none of it, so this reached release-please as a release type it
+  // has never heard of. Both entry points read one builder now.
+  // Manifest mode, which is what a repository with the two files gets and
+  // what `--release-type` switches off. Every other case here passes that
+  // flag, so without this the flagless half of the switch -- and the config
+  // and manifest flags that only mean anything there -- ran in no test of
+  // either entry point.
+  describe("without a release type", () => {
+    const CONFIG = { packages: { ".": { "release-type": "node" } } };
+    const MANIFEST = { ".": "1.0.0" };
+
+    /** checkout writes the two files the way a repository carrying them
+     * would, and returns the root to read them from. */
+    function checkout(): string {
+      const root = tmp();
+      writeFileSync(join(root, "release-please-config.json"), JSON.stringify(CONFIG));
+      writeFileSync(join(root, ".release-please-manifest.json"), JSON.stringify(MANIFEST));
+      return root;
+    }
+
+    /** without drops `--release-type` from the ordinary invocation. */
+    async function without(extra: string[], over: Partial<FakeRepo> = {}) {
+      const argv = await flags(extra, {
+        files: {
+          "package.json": JSON.stringify({ name: "widgets", version: "1.0.0" }),
+          "release-please-config.json": JSON.stringify(CONFIG),
+          ".release-please-manifest.json": JSON.stringify(MANIFEST),
+        },
+        ...over,
+      });
+      const at = argv.indexOf("--release-type");
+      argv.splice(at, 2);
+      return argv;
+    }
+
+    it("projects from the files in the checkout", async () => {
+      await cli(await without(["--repo-root", checkout()]));
+      expect(printed()).toContain("**1.1.0**");
+    });
+
+    it("says which mode a checkout with no files is missing", async () => {
+      await expect(cli(await without(["--repo-root", tmp()]))).rejects.toThrow(
+        /no `release-please-config\.json`.*`release-type`/s,
+      );
+    });
+  });
+
+  it("names the release types when the given one is not among them", async () => {
+    await expect(
+      cli(await flags(["--release-type", "nodejs"])),
+    ).rejects.toThrow(/--release-type must be one of .*\bnode\b.*got `nodejs`/s);
+  });
+
+  it("names the strategies when the versioning one is not among them", async () => {
+    await expect(
+      cli(await flags(["--versioning-strategy", "always-bump-path"])),
+    ).rejects.toThrow(
+      /--versioning-strategy must be one of .*\balways-bump-patch\b.*got `always-bump-path`/s,
+    );
+  });
+
+  // A version release-please cannot parse otherwise fails from inside the
+  // strategy, after the walk, with nothing naming the flag that carried it.
+  it("refuses a release-as that is not a version", async () => {
+    await expect(
+      cli(await flags(["--release-as", "v2.4.0"])),
+    ).rejects.toThrow(/--release-as must be a version, like `1\.2\.3`; got `v2\.4\.0`/);
   });
 
   it("reads a package file the pull request adds, from the head", async () => {

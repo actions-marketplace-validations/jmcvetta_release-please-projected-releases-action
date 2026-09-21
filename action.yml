@@ -3,7 +3,7 @@
 # A bundled JavaScript action: `dist/index.mjs` is committed, so a caller pays
 # no install step and the version they pin is the code that runs. Rebuild it
 # with `npm run build`; CI fails a pull request whose bundle is stale.
-name: release-please Projected Releases
+name: Projected Releases for release-please
 # Under 125 characters: GitHub Marketplace rejects a longer one.
 description: >-
   Say which release-please tags merging a pull request will cut, from its
@@ -27,7 +27,7 @@ inputs:
       sticky comment. `render` only writes the file and the outputs, for a
       job whose token cannot comment. `comment` posts a body an earlier job
       rendered, and projects nothing — the two halves of the fork-safe
-      arrangement in the README.
+      arrangement in `examples/`.
     required: false
     default: render-and-comment
 
@@ -70,9 +70,16 @@ inputs:
     required: false
     default: auto
   head:
-    description: Local git ref of the pull request head, for the changed-file diff.
+    description: >-
+      Local git ref of the pull request head. Defaults to `HEAD` for the
+      changed-file diff, and to `head-sha` where the checkout holds it for the
+      branch's commits under a merge or rebase projection: on a
+      `pull_request` event `HEAD` is `refs/pull/N/merge`, whose diff is the
+      pull request's but whose commit is not one merging writes. Set it to
+      override both.
     required: false
-    default: HEAD
+    default: ""
+
   diff-base:
     description: >-
       Local git ref the checkout is read through: the changed-file diff runs
@@ -91,18 +98,41 @@ inputs:
     required: false
     default: .release-please-manifest.json
   repo-root:
-    description: Directory the two files above are read from.
+    description: >-
+      Directory the two files above are read from, and the checkout
+      `release-workflow` is looked for under.
     required: false
     default: "."
+  release-workflow:
+    description: >-
+      Where the workflow calling `googleapis/release-please-action` is, so
+      that the inputs below can be compared with the ones it passes -- two
+      copies of one configuration, and a projection of tags that will not be
+      cut when they drift apart. `auto` (default) scans `.github/workflows`
+      in the checkout; a path names one workflow; `off` reads nothing.
+      Checking only, never reading values in: anything that cannot be worked
+      out for certain -- no such workflow, one that does not parse, two that
+      could both be the releaser, a value the runner resolves rather than the
+      file -- produces no note rather than a guess.
+    required: false
+    default: auto
 
   release-type:
     description: >-
       Set this for a repository release-please runs WITHOUT a manifest --
       `release-type:` on release-please-action, no release-please-config.json
       and no .release-please-manifest.json. One package, configured here
-      rather than read from the checkout, so `config-file`, `manifest-file`
-      and `repo-root` are unused. Values are release-please's own release
-      types (`node`, `python`, `simple`, ...). Leave empty for manifest mode.
+      rather than read from the checkout, so `config-file` and `manifest-file`
+      are unused. (`repo-root` still is: the release strategy opens the
+      package file to derive the component name.) Values are release-please's
+      own release types (`node`, `python`, `simple`, ...). Leave empty for
+      manifest mode.
+
+      Its presence is the mode switch, exactly as on release-please-action,
+      so it has to match what your release workflow passes: set here and not
+      there, release-please reads the config files this projection ignored.
+      Setting it with those files in the checkout is a warning on the
+      comment, not an error.
     required: false
     default: ""
   package-path:
@@ -116,6 +146,9 @@ inputs:
       Component name for the single package, with `release-type`. Usually
       unnecessary: the release type derives one (a `node` release takes the
       package.json name) and this action asks release-please for it.
+      release-please-action exposes no input for this, so a repository whose
+      releases it cuts cannot set one -- leave this empty unless something
+      that can (release-please's own CLI) cuts them.
     required: false
     default: ""
   include-component-in-tag:
@@ -126,7 +159,28 @@ inputs:
     required: false
     default: ""
   tag-separator:
-    description: What separates component from version in a tag, with `release-type`.
+    description: >-
+      What separates component from version in a tag, with `release-type`.
+      Like `component`, release-please-action exposes no input for this.
+    required: false
+    default: ""
+  versioning-strategy:
+    description: >-
+      How the version bumps, with `release-type`. Pass what your release
+      workflow passes: left alone release-please bumps a minor for `feat:`
+      and a patch for `fix:`, and `always-bump-patch` (say) releases a
+      feature as a patch. One of release-please's own strategies
+      (`default`, `always-bump-patch`, `prerelease`, ...).
+    required: false
+    default: ""
+  release-as:
+    description: >-
+      A version to release, with `release-type`, forcing every release to it.
+      Pass what your release workflow passes. This is the release-please
+      -action input, which is sticky -- it holds until the line is removed,
+      so a repository that has one releases that version and no other. The
+      `Release-As:` trailer in a pull request body is the per-commit form,
+      and this action reads that from the body already.
     required: false
     default: ""
 
@@ -153,10 +207,20 @@ inputs:
 
   merge-method:
     description: >-
-      How this repository merges pull requests. `auto` (default) reads the
-      repository's settings and notes it in the comment when they will not
-      produce the commit the projection assumes. `squash`, `merge` and
-      `rebase` assert one without the read.
+      How this repository merges pull requests, which decides what the
+      projection models. `auto` (default) reads the repository's settings:
+      squash-merge wherever it is allowed, and the method the repository does
+      allow otherwise. `squash` and `rebase` assert one without the read;
+      `merge` asserts the method but still reads `merge_commit_title` and
+      `merge_commit_message`, which decide what the merge commit says.
+
+      Under `merge` and `rebase` the pull request title is not what
+      release-please parses -- the branch's own commits are, plus the merge
+      commit under `merge` -- so the title's type decides nothing and
+      `malformed-title` is always false. Those commits are read from the
+      checkout as `<diff-base>..<head>`, which needs `fetch-depth: 0`, and
+      from the API otherwise at one request per commit for their files. A
+      branch too long for that is left unmodelled and the comment says so.
     required: false
     default: auto
   link-release-prs:
@@ -211,7 +275,9 @@ outputs:
   malformed-title:
     description: >-
       `true` when the projection was withheld because the title is not a
-      Conventional Commit the changelog recognizes.
+      Conventional Commit the changelog recognizes. Always `false` under
+      `merge-method: merge` or `rebase`, where the title is not what
+      release-please parses.
   recognized-types:
     description: >-
       The commit types this run resolved, comma-separated. Pin a PR-title

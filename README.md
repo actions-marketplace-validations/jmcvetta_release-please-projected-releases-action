@@ -1,13 +1,13 @@
-# projected-releases
+# Projected Releases for release-please
 
-[![Test](https://github.com/jmcvetta/release-please-projected-releases-action/actions/workflows/test.yml/badge.svg)](https://github.com/jmcvetta/release-please-projected-releases-action/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/v/release/jmcvetta/release-please-projected-releases-action)](https://github.com/jmcvetta/release-please-projected-releases-action/releases)
-[![License](https://img.shields.io/github/license/jmcvetta/release-please-projected-releases-action)](LICENSE)
+[![Test](https://github.com/jmcvetta/projected-releases-action/actions/workflows/test.yml/badge.svg)](https://github.com/jmcvetta/projected-releases-action/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/jmcvetta/projected-releases-action)](https://github.com/jmcvetta/projected-releases-action/releases)
+[![License](https://img.shields.io/github/license/jmcvetta/projected-releases-action)](LICENSE)
 
-A GitHub Action for repositories that squash-merge: it comments on a pull
-request with the release-please tags merging it will cut — or says plainly
-that nothing is released. The numbers come from a bundled release-please, not
-a reimplementation of its rules.
+A GitHub Action that comments on a pull request with what
+[release-please](https://github.com/googleapis/release-please) will do when
+it merges: which packages release, at what version, and under which tag. The
+numbers come from release-please itself, bundled into the action.
 
 ---
 
@@ -40,24 +40,8 @@ _1 other package unchanged: `acme-ui`._
 
 ---
 
-One sticky comment, re-rendered as the title or the branch changes. When
-nothing releases there is no table, just ``None — `docs:` produces no
-release.``
-
-It also says when the numbers cannot be trusted. If a component's entry in
-`.release-please-manifest.json` names a version that no release or tag
-matches, release-please has no boundary to compute from: it replays the
-component's whole history into one changelog and reaches a version by
-arithmetic over all of it. That is what a lost tag looks like — and what a
-first release looks like — so the comment reports the disagreement and marks
-the affected version as unreliable rather than presenting it as the answer.
-
-## Does it fit your repository?
-
-- **release-please**, manifest mode or plain mode (`release-type:`).
-- **Squash-merge**, which is what makes the title the commit. Merge commits
-  and rebase are planned —
-  [#50](https://github.com/jmcvetta/release-please-projected-releases-action/issues/50).
+The comment is updated as the title or the branch changes. When nothing
+releases, it says so.
 
 ## Quick start
 
@@ -68,36 +52,101 @@ name: Projected releases
 on:
   pull_request:
     types: [opened, reopened, synchronize, edited]
+concurrency:
+  group: projected-releases-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 permissions:
   contents: read
   pull-requests: write
 jobs:
-  preview:
+  projection:
     runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.pull_request.head.ref, 'release-please--') }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: jmcvetta/release-please-projected-releases-action@v0
+      - uses: jmcvetta/projected-releases-action@v0
 ```
 
-Keep `edited` in the trigger list: the projection comes from the title, so a
-title fixed after review has to re-render. Keep `fetch-depth: 0` too: the
-checkout answers what each commit changed, which the API otherwise answers one
-request per commit. `@v0` tracks the latest `0.x`, and
-[`examples/projected-releases.yml`](examples/projected-releases.yml) adds a
-`concurrency` group and skips release-please's own release pull requests.
+That is all a repository with `release-please-config.json` and
+`.release-please-manifest.json` needs. Keep `edited` in the trigger list, so
+a title fixed after review re-renders the comment. The `concurrency:` block
+matters because a title edit and a push often land close together, and it
+keeps the last-written comment describing the current head. The `if:` skips
+release-please's own release pull requests, which always release something
+regardless of what their title says.
 
-## Configuration
+`fetch-depth: 0` buys three things: the changed-file diff runs from the merge
+base, each commit's file list is read locally instead of one API request
+per commit, and a merge or rebase projection can read the branch's commits at
+all. A shallow clone falls back to the API for all three. The third fallback
+is capped at 50 commits, and a longer branch is left unmodelled, which the
+comment says.
 
-None, where release-please reads `release-please-config.json` and
-`.release-please-manifest.json` from the repository.
+On a pull request from a fork, the token is read-only. The comment is not
+posted; the projection stays in the job summary, and the run logs a warning
+saying so. The fork-safe pair below posts the comment anyway.
 
-Without those files, release-please is configured by the `release-type:` your
-release workflow passes it. Pass this action the same value:
+## Plain mode
+
+If your release workflow configures release-please with inputs instead of
+those files, pass this action the same values:
 
 ```yaml
-      - uses: jmcvetta/release-please-projected-releases-action@v0
+      - uses: jmcvetta/projected-releases-action@v0
         with:
           release-type: node
 ```
+
+`versioning-strategy`, `release-as`, `package-path`, and
+`include-component-in-tag` work the same way. The comment warns when these
+disagree with your release workflow.
+
+## Merge method
+
+The projection follows your repository's merge settings, and assumes a
+squash-merge wherever squash is allowed. To project a different merge:
+
+```yaml
+      - uses: jmcvetta/projected-releases-action@v0
+        with:
+          merge-method: merge   # or rebase
+```
+
+| merge method | what is projected |
+| --- | --- |
+| squash | the pull request title and description, as one commit |
+| rebase | the branch's commits |
+| merge | the branch's commits, plus the merge commit |
+
+## Outputs
+
+| Output | What it holds |
+| --- | --- |
+| `comment-file` | The file the comment body was written to. |
+| `body` | The rendered comment body. |
+| `releases` | The projected releases as JSON, one `{component, version, notes}` per tag merging would cut. |
+| `releases-count` | How many releases merging would cut. `0` is the common case. |
+| `malformed-title` | `true` when the projection was withheld because the title is not a Conventional Commit the changelog recognizes. Always `false` under `merge-method: merge` or `rebase`, where the title is not what release-please parses. |
+| `recognized-types` | The commit types this run resolved, comma-separated. Pin a PR-title gate to this instead of keeping a second copy of the list. |
+
+A later step reads them through `steps.<id>.outputs`:
+
+```yaml
+      - id: projected
+        uses: jmcvetta/projected-releases-action@v0
+      - if: steps.projected.outputs.malformed-title == 'true'
+        run: exit 1
+```
+
+This action also writes the projection to the job summary; set
+`step-summary: false` to turn that off.
+
+## More
+
+- [`examples/`](examples/) has a fuller workflow, and a fork-safe pair for
+  repositories that take pull requests from forks.
+- [`action.yml`](action.yml) documents every input and output.
+- Running on GitHub Enterprise Server: `api-url` and `graphql-url` default to
+  the running server's and can be set for a GHES instance.

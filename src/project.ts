@@ -22,11 +22,17 @@ import type {
 } from "release-please";
 import { armBoundaryWatch, drainBoundaries } from "./boundary.js";
 import type { UnresolvedBoundary } from "./boundary.js";
-import { commitSource } from "./commits.js";
-import type { CommitFiles } from "./commits.js";
+import { historySource, walkPageSize } from "./history.js";
+import type { CommitFiles } from "./history.js";
+import { retryingGraphql } from "./graphql-retry.js";
 import { componentOfBranch } from "./conventional.js";
 import { ROOT_PACKAGE_PATH, splitFiles } from "./split.js";
-import type { HeadOverrides, ReadHeadFile, SyntheticCommit } from "./pr-view.js";
+import type {
+  BranchCommit,
+  HeadOverrides,
+  ReadHeadFile,
+  SyntheticCommit,
+} from "./pr-view.js";
 import { viewWithPullRequest } from "./pr-view.js";
 
 /** DEFAULT_CONFIG_FILE is release-please's config path. */
@@ -188,23 +194,25 @@ export function plainPackage(config: PlainConfig): PackageConfig {
  * withReleasedVersions fills in each package's current version from the
  * manifest release-please built.
  *
- * In manifest mode the version came from the manifest file and this changes
- * nothing. In plain mode there is no such file: the base version is whatever
- * the latest tag says, which release-please resolves while constructing the
- * manifest and exposes as `releasedVersions`. Without it the "Current" column
- * is blank and the bump cannot be named, since naming it compares the two
- * versions.
+ * release-please's reading wins over the checkout's. In plain mode there is
+ * no manifest file at all: the base version is whatever the latest tag says,
+ * which release-please resolves while constructing the manifest and exposes
+ * as `releasedVersions`. In manifest mode `readPackages` read the checkout's
+ * copy, and that is the target branch's only where the pull request changes
+ * it -- otherwise release-please read the target branch itself, which holds
+ * the version the next bump really applies to. Without this the "Current"
+ * column is blank in plain mode and a release behind in manifest mode, and
+ * the bump cannot be named, since naming it compares the two versions.
  */
 export function withReleasedVersions(
   manifest: Manifest,
   packages: readonly PackageConfig[],
 ): PackageConfig[] {
   const released = manifest.releasedVersions ?? {};
-  return packages.map((pkg) =>
-    pkg.current === undefined && released[pkg.path]
-      ? { ...pkg, current: released[pkg.path]!.toString() }
-      : pkg,
-  );
+  return packages.map((pkg) => {
+    const version = released[pkg.path];
+    return version ? { ...pkg, current: version.toString() } : pkg;
+  });
 }
 
 /**
@@ -404,8 +412,14 @@ export interface ProjectOptions {
    * reads from the target branch. See ReadHeadFile in pr-view.ts. */
   readHeadFile?: ReadHeadFile;
   /** commitFiles answers a commit's file list without the API, when the
-   * caller has a checkout that can. See CommitFiles in commits.ts. */
+   * caller has a checkout that can. See CommitFiles in history.ts. */
   commitFiles?: CommitFiles;
+  /**
+   * branch are the commits merging puts on the target branch individually,
+   * newest first, for a repository that merges or rebases rather than
+   * squashes. Given none, the squash-merge of `commit` is what is modelled.
+   */
+  branch?: readonly BranchCommit[];
 }
 
 // A `Release-As:` note on a line of its own. The key is matched
@@ -502,10 +516,11 @@ export function releaseAsNotes(body: string): ReleaseAsNotes {
 /**
  * project runs both passes and assembles the result.
  *
- * The head's config and manifest are served to the pull request pass, because
- * after the merge those are the files master carries: a branch that adds a
- * component should preview as adding one. The target-branch pass reads the
- * target branch normally, since that is the state it describes.
+ * The head's config and manifest are served to the pull request pass where
+ * the pull request changes them, because after the merge those are the files
+ * master carries: a branch that adds a component should preview as adding
+ * one. Everything else is read from the target branch on both passes, since
+ * that is the state the merge lands on and the checkout may lag it.
  */
 export async function project(options: ProjectOptions): Promise<Projection> {
   const configFile = options.configFile ?? DEFAULT_CONFIG_FILE;
@@ -525,30 +540,51 @@ export async function project(options: ProjectOptions): Promise<Projection> {
     ? [plainPackage(plain)]
     : readPackages(options.config, options.manifest);
 
+  // The head's copy of the config and the manifest, for the files the pull
+  // request changes and only those. A file it leaves alone is read from the
+  // target branch, as release-please itself reads it, because the checkout
+  // is not the target branch: on a `pull_request` event it is GitHub's merge
+  // of the head into the target branch as it stood when the event fired, and
+  // a release cut since then has moved the manifest on without moving the
+  // checkout. Serving that copy regardless projected the release that had
+  // already been cut -- a clean-looking table, one release behind, and a
+  // re-run reproduced it, since a re-run checks out the same merge commit.
+  //
   // Plain mode has no config or manifest file to override -- the
   // configuration came from the caller. It still reads a file, though: the
   // release strategy opens the package file on the target branch to derive
-  // the component name, which `readHeadFile` serves from the head.
-  const overrides: HeadOverrides = plain
-    ? {}
-    : {
-        [configFile]: options.config,
-        [manifestFile]: options.manifest,
-      };
+  // the component name, which `readHeadFile` serves from the head under the
+  // same rule.
+  const changed = new Set(options.commit.files);
+  const overrides: HeadOverrides = {};
+  if (!plain) {
+    if (changed.has(configFile)) overrides[configFile] = options.config;
+    if (changed.has(manifestFile)) overrides[manifestFile] = options.manifest;
+  }
 
   // An override wins over anything the repository's own config says, so a
   // repository that has tuned either of these keeps its value: the projection
   // has to describe the release-please run the merge will get, not a
   // differently configured one. Plain mode has no config file to tune them in.
   const tuned = plain ? {} : options.config;
+  const configuredBatchSize = tuned["commit-batch-size"];
   const manifestOptions = {
     ...(tuned["commit-search-depth"] === undefined
       ? { commitSearchDepth: COMMIT_SEARCH_DEPTH }
       : {}),
-    ...(tuned["commit-batch-size"] === undefined
+    ...(configuredBatchSize === undefined
       ? { commitBatchSize: COMMIT_BATCH_SIZE }
       : {}),
   };
+  // What the shared walk pages at, resolved the way release-please's own run
+  // resolves it: the repository's value where it declares a usable one, this
+  // action's where it declares none, and release-please's own default where
+  // it declares something release-please discards -- which is what
+  // `commitBatchSize || DEFAULT_COMMIT_BATCH_SIZE` does with a zero.
+  const walkBatchSize =
+    configuredBatchSize === undefined
+      ? COMMIT_BATCH_SIZE
+      : walkPageSize(configuredBatchSize);
 
   /** build makes a Manifest the way this repository is configured. Both
    * statics are release-please's public surface. */
@@ -569,18 +605,29 @@ export async function project(options: ProjectOptions): Promise<Projection> {
           manifestOptions,
         );
 
-  // Both passes read the target branch through one walk, cached between them,
-  // and both serve file lists from the checkout when there is one.
-  const source = commitSource(
-    options.github,
-    options.commitFiles ? { files: options.commitFiles } : {},
-  );
+  // Both passes read the branch's commits, the releases and the tags through
+  // one walk each, cached between them, and both serve commit file lists from
+  // the checkout when there is one. Every question either pass asks of the
+  // branch's commits is answered from the one walk, which is why the page size
+  // goes here as well as to the manifest: the release search release-please
+  // runs first passes none of its own, and would otherwise page at ten.
+  //
+  // The retry wrapper goes underneath, and the order is load-bearing:
+  // `historySource` starts the upstream iterators with its own wrapper as the
+  // receiver, so a retry installed above it is never the `this.graphql`
+  // release-please reaches. Inverted, nothing breaks and nothing is ever
+  // retried.
+  const source = historySource(retryingGraphql(options.github), {
+    ...(options.commitFiles ? { files: options.commitFiles } : {}),
+    batchSize: walkBatchSize,
+  });
 
   const view = viewWithPullRequest(
     source,
     options.commit,
     overrides,
     options.readHeadFile,
+    options.branch,
   );
   // Armed before the first pass and drained after each, so a boundary the
   // pull request resolves is not reported against the branch that resolved it.
@@ -624,15 +671,35 @@ export async function project(options: ProjectOptions): Promise<Projection> {
     packages.map((p) => p.path),
   );
 
+  // Where a `Release-As:` note could be written is whatever merging turns
+  // into a commit message: the pull request body under squash-merge, and each
+  // of the branch's own commit messages otherwise. Read separately rather
+  // than concatenated, because a trailer at the end of one commit is a
+  // trailer, and joining it to the next message would make it look like the
+  // mid-body note the warning below exists to catch.
+  //
+  // The body is read under a merge or a rebase as well, and it is the case
+  // that most needs reading: there the description reaches a commit message
+  // only where the merge commit is configured to carry it, so under GitHub's
+  // default `merge_commit_message: PR_TITLE` a note written there asks for a
+  // version nothing will ever parse. Unread, that is silent -- the same
+  // silence as the placement rule, arrived at a different way. Read, it is a
+  // note release-please did not honour, which is what the warning says. It
+  // goes last so a trailer on a real commit is still the one `asked` names.
+  const sources = options.branch?.length
+    ? [...options.branch.map((c) => c.message), options.commit.body]
+    : [options.commit.body];
+  const notes = sources.map(releaseAsNotes);
   // A note was honoured when release-please returned the version it names.
-  // Any note in the body will do for that: honouring the wrong one is still
-  // not ignoring the ask, and reporting the note that was ignored is the
-  // whole point of the warning.
-  const notes = releaseAsNotes(options.commit.body);
-  const honoured = notes.seen.find((v) => projected.some((r) => r.version === v));
-  const asked = honoured ?? notes.meant;
+  // Any note will do for that: honouring the wrong one is still not ignoring
+  // the ask, and reporting the note that was ignored is the whole point of
+  // the warning.
+  const seen = notes.flatMap((n) => n.seen);
+  const meant = notes.map((n) => n.meant).find((v) => v !== undefined);
+  const honoured = seen.find((v) => projected.some((r) => r.version === v));
+  const asked = honoured ?? meant;
   const ignoredReleaseAs =
-    !honoured && notes.meant && touched.size > 0 ? notes.meant : undefined;
+    !honoured && meant && touched.size > 0 ? meant : undefined;
 
   return {
     packages,
