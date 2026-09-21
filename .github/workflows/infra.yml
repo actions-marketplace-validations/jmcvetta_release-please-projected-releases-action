@@ -50,7 +50,7 @@ jobs:
   infra:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # No `npm ci`. `check:infra` shells out to `tofu` and reaches for no
       # dependency, so the npm on the runner is enough to read the script out
