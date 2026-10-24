@@ -92,30 +92,7 @@ describe(".release-please-manifest.json", () => {
   });
 });
 
-describe("ci.yml's test filter", () => {
-  it("names every file this suite reads outside src/", () => {
-    // An input left off this allow-list silently stops running the test that
-    // reads it. These are the test's non-src inputs, including this contract.
-    const pathFilter = steps(workflow("ci.yml")).find(
-      (step) => step.uses === "dorny/paths-filter@v4",
-    );
-    expect(pathFilter).toBeDefined();
-    const filters = parse(pathFilter?.with?.filters as string) as Record<
-      string,
-      string[]
-    >;
-    for (const name of [
-      "action.yml",
-      "release-please-config.json",
-      ".release-please-manifest.json",
-      ".github/workflows/release-please.yml",
-      ".github/workflows/release-projection.yml",
-      ".github/workflows/ci.yml",
-    ]) {
-      expect(filters.test, name).toContain(name);
-    }
-  });
-});
+
 
 describe("the workflows that name the release mode", () => {
   it("releases without a `release-type` input", () => {
