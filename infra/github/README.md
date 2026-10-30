@@ -72,11 +72,11 @@ npm run check:infra
 It runs `tofu fmt -check`, then `tofu init -backend=false`, then
 `tofu validate`. The `-backend=false` is what keeps it credential-free:
 providers are installed for validation, and neither state nor the GitHub API is
-touched. `.github/workflows/infra.yml` runs it on every pull request that
-touches this directory, so a syntax error or an attribute the provider does not
-have fails in review. It is its own workflow so that GitHub's `paths:` filter
-can gate it: a pull request that changes only `src/` should not be paying for a
-toolchain download and a provider fetch.
+touched. The `infra` filter in `.github/workflows/ci.yml` selects its setup,
+validation and lockfile steps for changes to this directory or `package.json`.
+The `Checks` job always reports; the filter gates only its steps, so unrelated
+pull requests still receive the required context without downloading the
+toolchain or provider.
 
 It is not part of `npm run check`, which is the typecheck-build-test chain a
 laptop runs constantly and which must not start requiring OpenTofu to be
@@ -102,12 +102,12 @@ it does hold, in full:
 | `github_repository_ruleset` | the branch-protection rules | yes |
 | `github_repository_vulnerability_alerts` | a boolean | no |
 | `github_repository_dependabot_security_updates` | a boolean | no |
+| `github_actions_variable.release_bot_app_id` | the non-secret App ID | no |
 | `github_workflow_repository_permissions` | two Actions settings | no |
 
-The last three are settings the API will not hand an anonymous reader, so
-committing the state publishes them. That is a disclosure and not an accident:
-they say that Dependabot is on and that a workflow token is read-only unless a
-job asks for more. Neither is a thing anyone can use.
+The last four rows describe settings the API will not hand an anonymous reader,
+so committing the state publishes them: vulnerability alerts and Dependabot
+updates are enabled, workflow permissions are set, and the App ID is recorded.
 
 Against that, the alternatives cost more than they return. An S3 backend means
 an AWS account this repository has no other reason to touch; a hosted backend
@@ -135,39 +135,28 @@ exception for the one resource.
 
 ## What is not managed here, and why
 
-- **`test` as a required check.** `validate-title` is required (see below);
-  `test` is not, and the reason is `test.yml`'s `paths:` filter. A
-  path-filtered workflow reports no check run at all rather than a skipped
-  one, so a required `test` would leave every pull request that matches
-  nothing in its allow-list pending for ever, fixable only by someone
-  hand-applying this stack. Requiring it means dropping the filter in the
-  same commit, and nothing enforces that.
+- **A separate infrastructure check.** The `Checks` context is required
+  alongside `Release Projection`. Its `infra` path filter selects the
+  OpenTofu steps inside `ci.yml`; it does not suppress the required job on
+  other pull requests. The `Release Projection` job runs the title gate and
+  projection, with only the projection skipped on release-please branches.
 
-  What the release pull request costs is a separate thing, and it is a click
-  rather than an absence. The release job falls back to the default token, so
-  that pull request is opened by `github-actions[bot]`, and GitHub holds a
-  bot's workflow runs in `action_required` until someone with write access
-  clicks **Approve workflows to run**. `validate-title` therefore reports
-  there one click late — #79 has four check runs, each a second attempt a
-  human triggered, and it merged on a green `validate-title` without the
-  bypass. The release bot App below removes the click.
+  Once installed and configured, the release App opens its pull request with a
+  distinct identity, so GitHub runs both required checks without an approval
+  click.
 
-  `preview` stays out of it whatever happens. That job is advisory by design
-  and skips itself on release-please's own branches, so as a required check it
-  would never report there either.
-
-- **`RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY`.** `release-please.yml`
-  switches to a GitHub App when the variable is set, and the point of doing so
-  is that an App is a distinct identity, so GitHub does not hold the workflow
-  runs on its pull requests for approval — measured on
-  `jmcvetta/claude-daily-driver`, whose release pull requests run at the first
-  attempt with the App as the triggering actor. It removes an approval click,
-  not an event suppression. The private
-  key cannot be managed here under the rule above, and the variable is
-  deliberately not managed either: setting it while the key is missing or the
-  App is not installed makes the release job fail on its first step, which is
-  worse than the fallback it replaces. Both go in together, by hand, alongside
-  installing the App on this repository.
+- **The release App.** `RELEASE_BOT_APP_ID` is managed here as the non-secret
+  ID `4861873`. Install that App on this repository, then set its private key
+  as the hand-managed `RELEASE_BOT_PRIVATE_KEY` secret, which never enters
+  configuration or state. Do both before applying: setting the variable
+  without the key makes the release job fail on its first step. If the
+  variable already exists live, import it before planning with
+  `tofu import github_actions_variable.release_bot_app_id
+  projected-releases-action:RELEASE_BOT_APP_ID`. Then run `tofu plan`: an
+  absent variable should show only one creation; an imported variable whose
+  live value is `4861873` should show no changes. Review any proposed value
+  update and apply only the expected change, with no unrelated changes; commit
+  the resulting state.
 
 - **Labels.** Untouched GitHub defaults that nothing in the workflow reads.
   Managing them would encode a default nobody chose.
